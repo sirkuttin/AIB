@@ -229,6 +229,7 @@ export async function landSubagentWork(
       spec.title,
       {
         held: spec.held,
+        builder: true,
         journal: (stage, data) => {
           if (typeof data.tipBefore === 'string' && data.tipBefore) tipBefore = data.tipBefore;
           return journal(stage, data);

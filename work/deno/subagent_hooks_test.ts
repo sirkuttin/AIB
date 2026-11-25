@@ -281,9 +281,10 @@ Deno.test('P3: the stream settles subagents whose SubagentStop never came: finis
     assertEquals([stateOf('ag2')!.state, stateOf('ag2')!.stoppedWhy], ['stopped', 'it was cancelled']);
     assertEquals([stateOf('ag3')!.state, stateOf('ag3')!.stoppedWhy], ['stopped', 'it ended without saying why']);
     assertEquals(stateOf('ag4')!.state, 'running', 'still running: untouched');
-    // a background one TaskStop killed: its SubagentStop came first (done), then the stream said cancelled: stopped, never landed
+    // a background one TaskStop killed: its SubagentStop came first (a hint only: another hook may block a stop), then the stream said
+    // cancelled: stopped, never landed
     await service.hook('subagent-stop', chat.id, { agent_id: 'ag4', agent_type: 'general-purpose' });
-    assertEquals(stateOf('ag4')!.state, 'done');
+    assertEquals(stateOf('ag4')!.state, 'running', 'a SubagentStop alone is not its end');
     await service.acpEnded(chat.id, 'ag4', 'cancelled');
     assertEquals(stateOf('ag4')!.state, 'stopped');
     // a finished one the main agent continues (SendMessage, hidden in the RFD form): running again, then done at its next end
@@ -329,6 +330,8 @@ Deno.test('stopping the parent turn stops only the subagents it waits on: backgr
     assertEquals(stateOf('cg3').state, 'running', 'moved to the background: runs on');
     // it ends later: done, so it lands as usual (the landing itself: work/deno/e2e_subagent_cancel_test.ts)
     await service.hook('subagent-stop', chat.id, { agent_id: 'cg1', agent_type: 'general-purpose' });
+    assertEquals(stateOf('cg1').state, 'running', 'the hook is a hint');
+    await service.acpEnded(chat.id, 'cg1', 'end_turn'); // the stream's word is the end
     assertEquals(stateOf('cg1').state, 'done');
     assertEquals(service.activity(chat.id).cg1, { where: 'Own worktree', landing: 'Lands when the turn ends' });
     // the explicit stop still works: the stream says Claude Code cancelled it (the Activity panel's per-subagent stop, TaskStop)
@@ -453,6 +456,8 @@ Deno.test('the hook routes: deny, pass, bind, cap, closed chats, hints; never al
     await call('subagent-stop', { agent_id: 'a1', agent_type: '' });
     assertEquals(Object.values(readSubagents(state)).find((r) => r.agentId === 'a1')!.state, 'running');
     await call('subagent-stop', { agent_id: 'a1', agent_type: 'general-purpose' });
+    assertEquals(Object.values(readSubagents(state)).find((r) => r.agentId === 'a1')!.state, 'running', 'a stop alone is only a hint (2026-11-25)');
+    await service.acpEnded(chat.id, 'a1', 'end_turn');
     assertEquals(Object.values(readSubagents(state)).find((r) => r.agentId === 'a1')!.state, 'done');
 
     // the cap: at most MAX_PER_CHAT live subagents (the finished a1 does not count: subagent_restart_test.ts)

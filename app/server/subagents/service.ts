@@ -27,7 +27,7 @@
  */
 import { isClaudeFamily } from '../agents/claude_family.ts';
 import { getLogger } from '../core/log.ts';
-import { isDict, pyStrip } from '../core/py.ts';
+import { isDict, pyStr, pyStrip } from '../core/py.ts';
 import { readJsonFile, saveJson } from '../state/json.ts';
 import { pathOf } from '../state/paths.ts';
 import { normcase, realpath, SEP } from '../platform/ospath.ts';
@@ -38,6 +38,7 @@ import { claudeConfigDir, isForkSkill } from './claude_config.ts';
 import { callTimeOf, preShell } from './shell_tag.ts';
 import { type ProcessReaper, recordReaped } from './reap.ts';
 import { OWN_WORK, ownWorkReason, ownWorkStuck } from './own_work.ts';
+import { markTold } from './landed_told.ts';
 import type { WslReap } from '../wsl/contract.ts';
 
 const log = getLogger('subagents');
@@ -574,8 +575,7 @@ export class SubagentWorktrees {
         case 'worktree-create':
           return await this.#worktreeCreate(chat, body as Record<string, unknown>);
         case 'post-agent':
-          await this.#postAgent(chat, body as Record<string, unknown>);
-          return pass();
+          return await this.#postAgent(chat, body as Record<string, unknown>);
         case 'subagent-stop':
           await this.#subagentStop(chat, body as Record<string, unknown>);
           return pass();
@@ -837,11 +837,18 @@ export class SubagentWorktrees {
     });
   }
 
-  async #postAgent(chat: SubagentChat, body: Record<string, unknown>): Promise<void> {
+  /**
+   * The Agent call returned (PostToolUse). A foreground call that completed is a real end of its subagent (a SubagentStop another hook
+   * blocked would have kept the call open), so its record is done here and lands at once; the hook then waits a few seconds for the
+   * landing and gives the main agent the outcome inside the tool result (additionalContext, so no extra turn). Nothing to say when it
+   * did not land in time: the steer-lane line of the swarm tells it then.
+   */
+  async #postAgent(chat: SubagentChat, body: Record<string, unknown>): Promise<HookAnswer> {
     const response = isDict(body.tool_response) ? body.tool_response as Record<string, unknown> : {};
     const agentId = typeof response.agentId === 'string' ? response.agentId : '';
     const toolUseId = typeof body.tool_use_id === 'string' ? body.tool_use_id : '';
     const status = typeof response.status === 'string' ? response.status.slice(0, 40) : '';
+    let waitFor = '';
     await this.#lockOf(chat.id).run(async () => {
       const mine = this.ofChat(chat.id);
       const bound = agentId ? mine.find((r) => r.agentId === agentId) : undefined;
@@ -851,7 +858,13 @@ export class SubagentWorktrees {
         const other = toolUseId ? mine.find((r) => r.id !== bound.id && r.toolUseId === toolUseId) : undefined;
         if (other && !other.userHook && !bound.userHook) await this.#swapCalls(bound, other);
         else if (other) await this.#patch(other.id, { toolUseId: bound.toolUseId });
-        await this.#patch(bound.id, { ...(toolUseId ? { toolUseId } : {}), hints: { ...bound.hints, postAgent: { at: now(), status } } });
+        const finished = status === 'completed' && bound.state === 'running' && !bound.userHook;
+        await this.#patch(bound.id, {
+          ...(toolUseId ? { toolUseId } : {}),
+          hints: { ...bound.hints, postAgent: { at: now(), status } },
+          ...(finished ? { state: 'done' as const, doneAt: now() } : {}),
+        });
+        if (finished || (status === 'completed' && bound.state === 'done' && !bound.userHook)) waitFor = bound.id;
         return;
       }
       const user = toolUseId ? mine.find((r) => r.state === 'user-hook' && r.toolUseId === toolUseId && !r.adopted) : undefined;
@@ -877,6 +890,31 @@ export class SubagentWorktrees {
         });
       }
     });
+    const told = waitFor ? await this.#landingOutcome(waitFor) : '';
+    if (!told) return pass();
+    markTold(this.stateDir, waitFor);
+    return json({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: told } });
+  }
+
+  /** How long the post-agent hook waits for a landing to finish (the forwarder gives up at 10 s). Tests make it short. */
+  inlineWaitMs = 4000;
+
+  /** The text of a landing that merged within inlineWaitMs ('' when it did not, or merged nothing): which files changed, to read again. */
+  async #landingOutcome(id: string): Promise<string> {
+    const until = Date.now() + this.inlineWaitMs;
+    for (;;) {
+      const h = readHelpers(this.stateDir)[id];
+      if (h?.state === 'merged' && !h.landing && !h.sub?.empty && h.merge?.landed) {
+        const diff = await wt.git(['diff', '--name-only', h.merge.tipBefore || `${h.merge.landed}~1`, h.merge.landed], h.project, { check: false });
+        const files = pyStr(diff.stdout).split(/\r?\n/).filter(Boolean);
+        const shown = files.slice(0, 12).join(', ') + (files.length > 12 ? ' and more' : '');
+        return `AIB landed this subagent's changes in this folder on ${h.worktree?.landOn || 'the folder branch'} (files: ${shown || 'none'}). ` +
+          'Re-read those files before editing them. There is nothing for you to merge.';
+      }
+      if (h && (h.state === 'failed' || h.state === 'stopped')) return '';
+      if (Date.now() >= until) return '';
+      await new Promise((r) => setTimeout(r, 150));
+    }
   }
 
   /** Security review MF 5: '' when AIB may land from this user-hook worktree path, else why not (never one that is anything else's). */
@@ -912,10 +950,10 @@ export class SubagentWorktrees {
       const rec = this.ofChat(chat.id).find((r) => r.agentId === agentId);
       if (!rec) return;
       const hints = { ...rec.hints, stops: (rec.hints?.stops ?? 0) + 1, lastStopAt: now() };
-      // P2: it ended. Done (lands when the parent is idle), unless it was stopped (never lands by itself). A forged stop for a running
-      // subagent lands nothing while its parent's turn runs (the landing needs the parent idle, under its landing lock).
-      const ends = rec.state === 'running' || (rec.state === 'user-hook' && !!rec.adopted?.verified);
-      await this.#patch(rec.id, { hints, ...(ends ? { state: 'done', doneAt: now() } : {}) });
+      // Only noted (owner 2026-11-25): matching SubagentStop hooks run in parallel, and another one (the project's guard) may block this
+      // stop and keep the subagent working, so this hook is not its end. The real end is the parent's stream (acpEnded 'end_turn'), a
+      // foreground Agent call's PostToolUse (#postAgent), or what Claude Code wrote of it (#settleFromTranscript at the turn's end).
+      await this.#patch(rec.id, { hints });
     });
   }
 
@@ -1252,6 +1290,10 @@ export class SubagentWorktrees {
     await this.#lockOf(chatId).run(async () => {
       // user-hook records whose Agent call never showed a worktree (refused, failed, forged) go (security review MF 4)
       for (const r of this.ofChat(chatId).filter((x) => x.state === 'user-hook' && !x.adopted)) await this.#update(r.id, () => null);
+      // a SubagentStop was seen but the stream never said it ended (its hook no longer marks it done): Claude Code's own record settles it
+      for (const r of this.ofChat(chatId).filter((x) => x.state === 'running' && !x.userHook && !x.wsl && (x.hints?.stops ?? 0) > 0)) {
+        await this.#settleFromTranscript(r, this.chat(chatId)?.hooks?.configDir, false).catch((error) => log.exception(error, 'Reading the end of subagent %s failed', r.id));
+      }
       let haveSpare = this.ofChat(chatId).some((r) => r.state === 'spare');
       for (const r of this.ofChat(chatId).filter((x) => x.state === 'prepared')) {
         if (!haveSpare && wt.lexists(r.path)) {

@@ -32,7 +32,8 @@ import { ownWorkReason } from '../subagents/own_work.ts';
 import { ignoredFiles, landSubagentWork, protectedPath, SCRATCH_EXT, scratchFiles } from '../worktrees/subagent_land.ts';
 export { ignoredFiles, protectedPath, SCRATCH_EXT, scratchFiles };
 import { claudeHelpers, swarmEnabled } from './settings.ts';
-import { readSubagents, type SubagentRecord } from '../subagents/service.ts';
+import { FILE as SUBAGENT_FILE, readSubagents, type SubagentRecord } from '../subagents/service.ts';
+import { wasTold } from '../subagents/landed_told.ts';
 import { wslFolderBranch, wslLandSubagent, wslSubagentWork } from '../wsl/subagents.ts';
 import { keepWork, workDiff, workStatus } from '../worktrees/subagent_work.ts';
 import { type Handoff, readHandoffs, updateHandoffs } from './handoff.ts';
@@ -107,6 +108,8 @@ export const LANDING_WAIT_NOTE_S = 600;
  * (2026-11-23: four builders waited hours behind a busy lead, with no line and no wake), and again every LANDING_REMIND_S.
  */
 export const LANDING_BUSY_WAKE_S = 120;
+/** Builders that landed within this time are told to their parent in one line (owner 2026-11-25). */
+export const LANDED_DEBOUNCE_MS = 10_000;
 /** Landing failures whose wake line already hands the work to the main agent (#wakeParent writes the ledger). */
 const HANDED_KINDS = new Set(['conflict', 'protected', 'failed', 'nobranch', 'hook']);
 /** An orphaned piece of work (its starting chat is not open) waits this long before it is handed to the project's main chat: the chat may come back (keeper, restart). */
@@ -151,11 +154,9 @@ export const folderParent = (h: Helper) => !!h.worktree?.landOn;
 
 /** The tool's answer when merge_helper queues (build plan 2.2). */
 export function queuedLine(h: Helper): string {
-  if (h.kind === 'subagent') {
-    return `Subagent “${h.title}” lands in the project folder when your turn ends. Finish your turn; the result is in your next message.`;
-  }
-  return `“${h.title}” (${chatName(h)}) lands in the project folder when your turn ends. Finish your turn; the result is ` +
-    'in your next message.';
+  const what = h.kind === 'subagent' ? `Subagent “${h.title}”` : `“${h.title}” (${chatName(h)})`;
+  return `${what} lands in the project folder as soon as none of your edits or commands is running. The result comes as a message; ` +
+    'you do not need to wait for it.';
 }
 
 export function newLanding(what: Landing['what'], by: Landing['by'], nowMs: number): Landing {
@@ -250,6 +251,17 @@ export class Swarm {
   openMs = OPEN_MS;
   /** How long a done or stopped helper idles before its chat is ended (END_IDLE_MS; tests make it short). */
   endIdleMs = END_IDLE_MS;
+  /** Landings that succeeded are told to their parent in one line, this long after the first (LANDED_DEBOUNCE_MS; tests make it short). */
+  landedDebounceMs = LANDED_DEBOUNCE_MS;
+  /** A finished helper with changes lands by itself (merge_helper still works). Tests that drive the landing by hand turn it off. */
+  autoLandHelpers = true;
+  /** Landed builders not yet told, by parent (live id), and the timer that tells them. */
+  #landedTold = new Map<string, { items: { id: string; label: string; files: string[]; target: string }[]; timer: ReturnType<typeof setTimeout> }>();
+  /** Project folders a builder landing runs in now: one at a time per folder, for Windows and WSL folders alike. */
+  #folderLanding = new Set<string>();
+  /** A poke came while a poll ran: one more poll follows it at once. */
+  #pokeAgain = false;
+  #watcher: Deno.FsWatcher | null = null;
 
   /** Own-copy chats' merges that wait for the chats in the project folder (build plan 2.3), run by the same watcher. */
   readonly copyMerges: CopyMergeQueue;
@@ -739,6 +751,7 @@ export class Swarm {
     try {
       result = await merge.merge(this.#mergeAib(), h.chat.live, h.title, false, { // fromTool=false: the helper must be idle
         held,
+        builder: folderParent(h),
         journal: (stage, data) => {
           if (typeof data.tipBefore === 'string' && data.tipBefore) lockedTip = data.tipBefore;
           return this.#patchLanding(id, {
@@ -939,11 +952,20 @@ export class Swarm {
   async #runLanding(h: Helper, parentId: string): Promise<Json | null> {
     const L = h.landing!;
     const lockId = newLockId();
-    const got = await lockChats(this.#mergeAib(), [parentId], h.title, `swarm:${h.id}`, lockId);
-    if (!got.held) {
-      if (h.kind === 'subagent' && L.what === 'merge') await this.#landingBusy(h, parentId, got.busy[1]).catch((e) => log.exception(e, 'Telling a waiting landing failed'));
+    // a builder's work lands while the parent's turn runs; only an open edit or shell call, or a background shell, holds it back
+    const builder = L.what === 'merge' && folderParent(h);
+    // one landing at a time per project folder (Windows or WSL: the key is the folder or its WSL reference)
+    const folderKey = builder ? (h.sub?.folder || h.project) : '';
+    if (folderKey && this.#folderLanding.has(folderKey)) {
+      await this.#landingBusy(h, parentId, 'another builder is landing in this folder').catch((e) => log.exception(e, 'Telling a waiting landing failed'));
       return null;
     }
+    const got = await lockChats(this.#mergeAib(), [parentId], h.title, `swarm:${h.id}`, lockId, builder);
+    if (!got.held) {
+      if (L.what === 'merge' && builder) await this.#landingBusy(h, parentId, got.busy[1]).catch((e) => log.exception(e, 'Telling a waiting landing failed'));
+      return null;
+    }
+    if (folderKey) this.#folderLanding.add(folderKey);
     this.#working.add(h.id);
     let out: Json;
     try {
@@ -957,6 +979,7 @@ export class Swarm {
     } finally {
       await got.held.release();
       this.#working.delete(h.id);
+      if (folderKey) this.#folderLanding.delete(folderKey);
     }
     await this.#afterLanding(h.id, L.what, out, parentId);
     await this.#cleanup(h.id);
@@ -975,12 +998,12 @@ export class Swarm {
     const clear = () => this.registry.update(id, (cur) => (cur ? { ...cur, landing: null } : null));
     if (state === 'merged' || state === 'undone') {
       await clear();
-      const did = what === 'undo' ? `the merge of helper ${name} was undone` : what === 'again' ? `helper ${name} was merged again` : '';
-      const line = what === 'merge'
-        ? `While you were idle, helper ${name} landed ${Number(out.commits) || 0} commit${Number(out.commits) === 1 ? '' : 's'} in this ` +
-          `folder (files: ${shown(files) || 'none'}). Re-read those files before editing them.`
-        : `While you were idle, ${did} in this folder (files: ${shown(files) || 'none'}). Re-read those files before editing them.`;
-      await context(line);
+      if (what === 'merge') { // told through the steer lane, in one line with the other builders that landed (#landedTell)
+        this.#landedTell(h, parentId, `helper ${name}`, files, s(out.target) || h.worktree.landOn || 'the folder branch');
+        return;
+      }
+      const did = what === 'undo' ? `the merge of helper ${name} was undone` : `helper ${name} was merged again`;
+      await context(`While you were idle, ${did} in this folder (files: ${shown(files) || 'none'}). Re-read those files before editing them.`);
       return;
     }
     if (state === 'dirty' || out.code === 'touched_dirty') {
@@ -994,17 +1017,15 @@ export class Swarm {
       }
       return;
     }
+    if (state === 'refused' && out.code === 'stale_lock') { // git's lock file is left over: only a person (the main agent) can clear it
+      await this.#patchLanding(id, { stage: 'queued', lockId: '', lastRefusal: s(out.message) });
+      await this.#tellOnce(h, parentId, 'stale', 'stale-lock', `Helper ${name} did not land yet: ${lower(s(out.message))}. Delete that file, and AIB lands it by itself.`);
+      return;
+    }
     if (state === 'refused' && RETRY_CODES.has(s(out.code))) {
+      // waiting, not a failure: no chat line (owner 2026-11-25); Activity shows "Waiting to land: <reason>" and AIB tries again
       const tries = (h.landing?.tries ?? 0) + 1;
-      const tell = tries >= LANDING_TRIES_NOTE && !h.landing?.toldTries;
-      await this.#patchLanding(id, { stage: 'queued', lockId: '', tries, lastRefusal: s(out.message), ...(tell ? { toldTries: true } : {}) });
-      if (tell) {
-        await this.note(
-          id,
-          'swarm-merge',
-          `Couldn't land “${h.title}” yet: ${lower(s(out.message))}. It will try again when the chat is next idle.`,
-        );
-      }
+      await this.#patchLanding(id, { stage: 'queued', lockId: '', tries, lastRefusal: s(out.message) });
       return;
     }
     await clear(); // done for good: conflicts (the helper was asked), can't undo cleanly, or a refusal that a retry won't change
@@ -1049,13 +1070,7 @@ export class Swarm {
             : `Merged “${h.title}” (${chatName(h)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'} · finished after a restart`,
           ['swarm-undo'],
         );
-        if (folderParent(h) && parentLive) {
-          await this.ctx.host.liveCall('prompt-context', {
-            id: parentLive,
-            line: `While you were idle, ${h.kind === 'subagent' ? 'your ' : 'helper '}${label(h)} landed ${commits} commit${commits === 1 ? '' : 's'} ` +
-              `in this folder (files: ${shown(files) || 'none'}). Re-read those files before editing them.`,
-          }).catch(() => {});
-        }
+        if (folderParent(h) && parentLive) this.#landedTell(h, parentLive, h.kind === 'subagent' ? label(h) : `helper ${label(h)}`, files, target);
         if (h.kind === 'subagent') await this.#release(h);
         return;
       }
@@ -1478,10 +1493,7 @@ export class Swarm {
           (kept.length ? ` · ${kept.length} new file${kept.length === 1 ? '' : 's'} kept in its worktree (${shown(kept)})` : ''),
         ['swarm-undo'],
       );
-      await context(
-        `While you were idle, your subagent “${h.title}” landed in this folder as one commit on ${target} (files: ${shown(files) || 'none'}). ` +
-          'Re-read those files before editing them.',
-      );
+      this.#landedTell(h, parentId, `subagent “${h.title}”`, files, target);
       if (!kept.length) await this.#release(h);
       return;
     }
@@ -1529,12 +1541,15 @@ export class Swarm {
       await this.#patchLanding(h.id, { stage: 'queued', lockId: '', lastRefusal: s(out.message) });
       return;
     }
+    if (state === 'refused' && out.code === 'stale_lock') { // git's lock file is left over: the main agent is told once, AIB lands it once the file is gone
+      await this.#patchLanding(h.id, { stage: 'queued', lockId: '', lastRefusal: s(out.message) });
+      await this.#tellOnce(h, parentId, 'stale', 'stale-lock', `Subagent “${h.title}” did not land yet: ${lower(s(out.message))}. Delete that file, and AIB lands it by itself.`);
+      return;
+    }
     if (state === 'refused' && RETRY_CODES.has(s(out.code))) {
-      const tries = (h.landing?.tries ?? 0) + 1;
-      const tell = tries >= LANDING_TRIES_NOTE && !h.landing?.toldTries;
-      await this.#patchLanding(h.id,{ stage: 'queued', lockId: '', tries, lastRefusal: s(out.message), ...(tell ? { toldTries: true } : {}) });
-      if (tell) await this.note(h.id, 'swarm-merge', `Couldn't land subagent “${h.title}” yet: ${lower(s(out.message))}. It will try again when the chat is next idle.`);
       // a retryable refusal is waiting, not a failure: never posted (Activity shows "Waiting to land: <reason>"); AIB tries again
+      const tries = (h.landing?.tries ?? 0) + 1;
+      await this.#patchLanding(h.id, { stage: 'queued', lockId: '', tries, lastRefusal: s(out.message) });
       return;
     }
     await clear();
@@ -1564,6 +1579,45 @@ export class Swarm {
     await this.registry.patch(h.id, { state: 'failed', reason: s(out.code) });
     await this.note(h.id, 'swarm-fail', `Couldn't land subagent “${h.title}”: ${lower(s(out.message))}.`);
     await this.#wakeParent(h, parentId, 'failed', `Subagent “${h.title}” did not land: ${lower(s(out.message))}.`);
+  }
+
+  /**
+   * A builder's landing succeeded (owner 2026-11-25): the parent is told through the steer lane (#wakeParent), so a busy agent gets it
+   * at its next safe point and an idle one is woken by it. Builders that land within landedDebounceMs of each other (per parent) are one
+   * line. The line names the files, so the agent reads them again. A foreground Claude Agent call that already got the outcome in its
+   * own tool result (PostToolUse, subagents/service.ts) is left out.
+   */
+  #landedTell(h: Helper, parentId: string, what: string, files: string[], target: string): void {
+    if (!parentId) return;
+    let slot = this.#landedTold.get(parentId);
+    if (!slot) {
+      const timer = setTimeout(() => void this.#flushLanded(parentId).catch((e) => log.exception(e, 'Telling the parent what landed failed')), this.landedDebounceMs);
+      this.#landedTold.set(parentId, slot = { items: [], timer });
+    }
+    slot.items.push({ id: h.id, label: what, files, target });
+  }
+
+  /** Tell now what landed for `parentId` (the debounce timer's job; tests call it). */
+  async #flushLanded(parentId: string): Promise<void> {
+    const slot = this.#landedTold.get(parentId);
+    if (!slot) return;
+    clearTimeout(slot.timer);
+    this.#landedTold.delete(parentId);
+    const items = slot.items.filter((i) => !wasTold(this.ctx.stateDir, i.id));
+    if (!items.length) return;
+    const files = [...new Set(items.flatMap((i) => i.files))];
+    const target = items[0].target;
+    const line = items.length === 1
+      ? `${items[0].label[0].toUpperCase()}${items[0].label.slice(1)} landed in this folder on ${target} (files: ${shown(files) || 'none'}). ` +
+        'Re-read those files before editing them. There is nothing for you to merge.'
+      : `${items.length} builders landed in this folder on ${target}: ${items.map((i) => i.label).join('; ')} (files: ${shown(files, 12) || 'none'}). ` +
+        'Re-read those files before editing them. There is nothing for you to merge.';
+    await this.#wakeParent({ id: items[0].id }, parentId, 'landed', line);
+  }
+
+  /** Tests: tell every parent what landed now, without waiting for the debounce. */
+  async flushLanded(): Promise<void> {
+    for (const parentId of [...this.#landedTold.keys()]) await this.#flushLanded(parentId);
   }
 
   /**
@@ -2091,11 +2145,50 @@ export class Swarm {
       if (this.#watching) this.#timer = setTimeout(loop, POLL_MS);
     };
     this.#timer = setTimeout(loop, 0);
+    void this.#watchSubagents();
+  }
+
+  /**
+   * A builder's end is written to AIB's subagent records (subagent-worktrees.json) by the agent host, a process of its own. Watching
+   * that file lets the landing start the moment the record says done, instead of at the next 2 s poll (owner 2026-11-25).
+   */
+  async #watchSubagents(): Promise<void> {
+    try {
+      const watcher = Deno.watchFs(this.ctx.stateDir, { recursive: false });
+      this.#watcher = watcher;
+      let last = 0;
+      for await (const event of watcher) {
+        if (!this.#watching) break;
+        if (!event.paths.some((p) => baseName(p).startsWith(SUBAGENT_FILE))) continue;
+        const now = Date.now();
+        if (now - last < 50) continue;
+        last = now;
+        this.poke();
+      }
+    } catch {
+      // watching is only a speed-up: the 2 s poll lands it all the same
+    }
+  }
+
+  /** Look at the builders now (a poll that runs already is followed by one more). */
+  poke(): void {
+    if (!this.#watching) return;
+    if (this.#busy) {
+      this.#pokeAgain = true;
+      return;
+    }
+    void this.poll();
   }
 
   async stopWatching(): Promise<void> {
     this.#watching = false;
     if (this.#timer !== null) clearTimeout(this.#timer);
+    try {
+      this.#watcher?.close();
+    } catch { /* closed */ }
+    this.#watcher = null;
+    for (const slot of this.#landedTold.values()) clearTimeout(slot.timer);
+    this.#landedTold.clear();
     await this.#busy?.catch(() => {});
     await this.copyMerges.poll().catch(() => {});
   }
@@ -2105,7 +2198,13 @@ export class Swarm {
     const run = this.#poll().catch((error) =>
       log.info('swarm: could not look at the helpers (%s)', error instanceof Error ? error.message : error)
     )
-      .finally(() => (this.#busy = null));
+      .finally(() => {
+        this.#busy = null;
+        if (this.#pokeAgain) {
+          this.#pokeAgain = false;
+          this.poke();
+        }
+      });
     this.#busy = run;
     return run;
   }
@@ -2158,13 +2257,20 @@ export class Swarm {
       const idle = attention.state === 'idle' && !(Array.isArray(queue.items) && queue.items.length);
       if (!idle || !ended || ended === h.turnEndedAt) continue;
       this.#working.add(h.id);
+      let changed = false;
       try {
-        await this.#report(h, chat, ended);
+        changed = await this.#report(h, chat, ended);
       } finally {
         this.#working.delete(h.id);
       }
       const fresh = this.registry.get(h.id);
       if (fresh && parent) await this.#deliverReports(fresh, parent);
+      // a helper that finished with changes lands by itself, like a subagent (owner 2026-11-25); merge_helper still works
+      if (fresh && parent && changed && this.#autoLands(fresh)) {
+        await this.#queue(fresh, 'merge', 'tool');
+        const queued = this.registry.get(fresh.id);
+        if (queued?.landing) await this.#landingStep(queued, parentLive);
+      }
     }
   }
 
@@ -2187,8 +2293,13 @@ export class Swarm {
     return h;
   }
 
-  /** The helper's turn ended: build the report from AIB's own facts and the helper's reply text. */
-  async #report(h: Helper, chat: Json, ended: string): Promise<void> {
+  /** A finished helper whose work lands without merge_helper: it works beside a folder chat, ended with a report (not a question), has no landing or merge yet. */
+  #autoLands(h: Helper): boolean {
+    return this.autoLandHelpers && h.kind !== 'subagent' && folderParent(h) && h.state === 'done' && !h.brief.read_only && !h.landing && !h.merge;
+  }
+
+  /** The helper's turn ended: build the report from AIB's own facts and the helper's reply text. True when it changed files. */
+  async #report(h: Helper, chat: Json, ended: string): Promise<boolean> {
     const state = obj(await this.ctx.host.liveState(s(chat.id), h.cursor || 1).catch(() => null));
     const events = Array.isArray(state.events) ? state.events.map(obj) : [];
     const reply = events.map((e) => obj(obj(e.data).update)).filter((u) => u.sessionUpdate === 'agent_message_chunk')
@@ -2229,6 +2340,7 @@ export class Swarm {
       outside: files.filter((f) => !owned(f, h.brief.owns)),
       doneWhen: h.brief.done_when,
       reply,
+      auto: folderParent(h) && !h.brief.read_only && files.length > 0 && !asks && h.state !== 'merged',
     });
     await this.registry.update(h.id, (cur) =>
       cur
@@ -2249,6 +2361,7 @@ export class Swarm {
       }): ${files.length} file(s) changed, +${insertions} −${deletions}, ${commits} commit(s)${asks ? ' · ended on a question, waiting for an answer' : ''}`,
       ['swarm-open'],
     );
+    return files.length > 0 && !asks;
   }
 
   /**

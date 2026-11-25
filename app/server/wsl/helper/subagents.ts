@@ -100,6 +100,7 @@ export function subagentMethods(data: string): Handlers {
   const chats = new Map<string, SubagentChat>();
   const root = new wt.Registry(data).root;
   const service = new SubagentWorktrees(data, root, (id) => chats.get(id) ?? null);
+  service.inlineWaitMs = 0; // the swarm (landing outcomes) is AIB's, not the distro's: a WSL chat is told by the swarm's steer-lane line
   // what a finished subagent left running is shut down HERE, over the distro's own /proc (subagents/reap.ts); AIB reads what was
   // done through `subagent.reaps` and posts the line in the parent chat (a restarted helper forgets old reports: only the line is lost)
   service.reaper = new ProcessReaper();

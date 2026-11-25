@@ -295,7 +295,7 @@ export function readCodexSetup(cwd: string, env: Record<string, string | undefin
 // ---- the system prompt lines ------------------------------------------------------------------------------------------------
 
 export const CODEX_SUBAGENT_PROMPT = 'Subagents you start with spawn_agent work in their own git worktree: AIB runs their shell commands ' +
-  "there and merges their changes into this folder when your turn ends. Do not merge, cherry-pick or copy files from a subagent's " +
+  "there and merges their changes into this folder when each one finishes (and tells you which files changed). Do not merge, cherry-pick or copy files from a subagent's " +
   'worktree yourself.';
 
 export const CODEX_SUBAGENTS_OFF_PROMPT = 'In this chat, subagents (spawn_agent) are turned off, because AIB could not give them their ' +

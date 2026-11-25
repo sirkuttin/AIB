@@ -133,10 +133,18 @@ Deno.test({
       // SubagentStop
       const stop = await run(commands.SubagentStop, { hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'general-purpose' });
       assertEquals(stop.code, 0, stop.err);
+      // 2026-11-25: a SubagentStop alone is not the end (another hook may block it and keep the subagent working): nothing lands
+      assert((await ws.wslSubagentRecords(KEY, c.id)).some((r) => r.state === 'running'), JSON.stringify(await ws.wslSubagentRecords(KEY, c.id)));
+      await swarm.poll();
+      assert(!(await sh('git -C "$1" log --format=%s -n 5 main', repo)).includes('AIB: subagent'), 'a builder still working landed');
+      // the foreground Agent call returning is its real end (the stream's end for a background one): the distro marks it done, AIB lands it
+      // at once, whatever the parent's turn is doing (no edit or shell call is open here)
+      const post = await run(commands.PostToolUse, { hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_response: { agentId: 'a1', status: 'completed' } });
+      assertEquals(post.code, 0, post.err);
       // a wrong hook key: AIB's answer is unsigned for it, so the call is blocked (exit 2), and nothing is made
       const wrong = await run(commands.PreToolUse, { hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_2', tool_input: { subagent_type: 'general-purpose', description: 'x', prompt: 'x' } }, 'wrong-key');
       assertEquals(wrong.code, 2, wrong.out + wrong.err);
-      // the parent is idle: the swarm lands it into the repo's branch in the distro
+      // the swarm lands it into the repo's branch in the distro
       await swarm.poll();
       let landed = '';
       for (let i = 0; i < 100 && !landed.includes('AIB: subagent Make the docs'); i++) {

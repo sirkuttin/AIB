@@ -75,6 +75,7 @@ class Box {
   newSwarm(): Swarm {
     const swarm = new Swarm({ stateDir: this.state, host: this.aib, settings: this.aib.settings });
     swarm.openMs = 30_000;
+    swarm.autoLandHelpers = false; // these tests drive the landing with merge_helper; the 2026-11-25 test below covers the automatic one
     return swarm;
   }
 
@@ -145,6 +146,13 @@ async function holdTurn(box: Box, c: Connection, name: string): Promise<() => Pr
   };
 }
 
+/** An edit call of the main agent that stays open (a Claude-style Edit waiting for its approval): what holds a builder's landing back. */
+async function holdEdit(c: Connection): Promise<() => Promise<void>> {
+  await c.prompt('allowedit:src/held.ts');
+  await until(() => c.permissions.size > 0, 'the edit call is open', 15);
+  return () => settle(c);
+}
+
 /**
  * A folder chat starts a helper; the helper commits `file` in its copy and its turn ends; its report reaches the (idle) main chat,
  * whose turn then ends too. Returns the helper id and its copy.
@@ -198,18 +206,18 @@ Deno.test({
     assertEquals(read(copy, 'tracked.txt'), 'half-done edit by the main agent\n', "the helper's copy started with the folder's edits");
     assertEquals(await merge.targetBranch(box.project, 'main', wt.recordForPath(box.state, copy)), 'feature-x');
 
-    // merge_helper during the main agent's turn: queued
-    const release = await holdTurn(box, main, 'busy');
+    // merge_helper while the main agent has an edit call open: queued
+    const release = await holdEdit(main);
     const mainBefore = runGit(box.project, 'rev-parse', 'main').trim();
     const tipBefore = runGit(box.project, 'rev-parse', 'feature-x').trim();
     const queued = await box.swarm.tool(main.id, 'merge_helper', { helper: id });
     assertEquals((queued[1] as Json).state, 'queued', JSON.stringify(queued[1]));
     assertEquals(
       (queued[1] as Json).message,
-      '“Login tests” (Codex) lands in the project folder when your turn ends. Finish your turn; the result is in your next message.',
+      '“Login tests” (Codex) lands in the project folder as soon as none of your edits or commands is running. The result comes as a message; you do not need to wait for it.',
     );
     await box.swarm.poll();
-    assertEquals(runGit(box.project, 'rev-parse', 'feature-x').trim(), tipBefore, 'nothing lands while the turn runs');
+    assertEquals(runGit(box.project, 'rev-parse', 'feature-x').trim(), tipBefore, 'nothing lands while its edit call is open');
     assertEquals(box.swarm.registry.get(id)!.landing?.stage, 'queued');
 
     // the turn ends: the next poll lands it
@@ -228,17 +236,17 @@ Deno.test({
     assertEquals(read(box.project, 'wip.txt'), 'new, not committed\n');
     assertEquals(stashes(box.project), '', 'never a stash under a folder chat');
     assert(notes(main).some((n) => n.startsWith('Merged “Login tests” (Codex) into feature-x · 1 commit')), notes(main).join('\n'));
-    await pause(300);
-    assertEquals(userTexts(main).length, turnsBefore, 'no automatic turn after a landing');
-    assert(!main.busy);
-
-    // the parent's next prompt carries the landed line, once
-    await ask(main, 'next');
-    const told = box.prompts(main).at(-1)!;
-    assert(told.includes('While you were idle, helper “Login tests” (Codex) landed 1 commit in this folder'), told);
-    assert(told.includes('test/login/a.test.txt'), told);
+    void turnsBefore;
+    // 2026-11-25: the landing is told through the steer lane (it wakes the idle parent), once, with the files
+    await box.swarm.flushLanded();
+    await until(() => box.prompts(main).some((p) => p.includes('landed in this folder on feature-x')), 'the parent was woken with the landing', 15);
+    const told = box.prompts(main).filter((p) => p.includes('landed in this folder on feature-x'));
+    assertEquals(told.length, 1);
+    assert(told[0].includes('Helper “Login tests” (Codex) landed') && told[0].includes('test/login/a.test.txt'), told[0]);
+    await settle(main);
+    await box.swarm.flushLanded();
     await ask(main, 'again');
-    assert(!box.prompts(main).at(-1)!.includes('While you were idle'), 'said once');
+    assertEquals(box.prompts(main).filter((p) => p.includes('landed in this folder on feature-x')).length, 1, 'said once');
 
     // 11b: Undo and Merge again move feature-x, not main; the parent is idle, so they run at once
     const undone = await box.swarm.undo(id);
@@ -250,6 +258,37 @@ Deno.test({
     assertEquals(read(box.project, 'test/login/a.test.txt'), 'fixed\n');
     assertEquals(read(box.project, 'tracked.txt'), 'half-done edit by the main agent\n', 'still uncommitted, never stashed');
     assertEquals(stashes(box.project), '');
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-25: a helper that finished with changes lands by itself (no merge_helper), even while the parent works; the parent is told once by the steer lane',
+  async fn() {
+    await using box = new Box();
+    box.swarm.autoLandHelpers = true;
+    const main = await box.connect(box.project);
+    const steers: { text: string }[] = [];
+    const own = box.aib.liveCall.bind(box.aib);
+    box.aib.liveCall = (name, body) => {
+      if (name === 'steer') steers.push({ text: String((body as Json).text) });
+      return own(name, body);
+    };
+    const [id] = await helperWithWork(box, main);
+    const h = box.swarm.registry.get(id)!;
+    assertEquals(h.state, 'merged', JSON.stringify(h.landing));
+    assertEquals(lsTree(box.project, 'main', 'test/login/a.test.txt'), 'test/login/a.test.txt', 'landed with no merge_helper');
+    assert(notes(main).some((n) => n.startsWith('Merged “Login tests” (Codex) into main · 1 commit')), notes(main).join('\n'));
+    const before = steers.length;
+    await box.swarm.flushLanded();
+    const told = steers.slice(before);
+    assertEquals(told.length, 1, JSON.stringify(told));
+    assert(told[0].text.includes('Helper “Login tests” (Codex) landed in this folder on main') && told[0].text.includes('test/login/a.test.txt'), told[0].text);
+    assert(!steers.some((s) => s.text.includes('Merge it with merge_helper')), 'the report asks for no merge_helper');
+    await settle(main);
+    // merge_helper still works on a landed helper: it says so
+    const again = await box.swarm.tool(main.id, 'merge_helper', { helper: id });
+    assertEquals(again[0], 409);
   },
 });
 
@@ -439,14 +478,14 @@ Deno.test({
     const [id] = await helperWithWork(box, main);
     const lock = pathOf(box.project, '.git', 'index.lock');
     Deno.writeTextFileSync(lock, '');
+    merge.gitWait.waitMs = 300; // a builder's landing waits for git inside the attempt, silently (2026-11-25)
     await box.swarm.tool(main.id, 'merge_helper', { helper: id });
     for (let i = 0; i < 4; i++) await box.swarm.poll();
     const L = box.swarm.registry.get(id)!.landing!;
     assertEquals(L.stage, 'queued');
     assert(L.tries >= 3, String(L.tries));
-    const lines = notes(main).filter((n) => n.startsWith("Couldn't land “Login tests” yet:"));
-    assertEquals(lines.length, 1, notes(main).join('\n'));
-    assert(lines[0].endsWith('It will try again when the chat is next idle.'), lines[0]);
+    assert(L.lastRefusal.includes('index.lock'), L.lastRefusal);
+    assertEquals(notes(main).filter((n) => n.startsWith("Couldn't land")).length, 0, 'a passing lock says nothing: ' + notes(main).join('\n'));
     assertEquals(main.landing, null, 'the lock was let go after each try');
     Deno.removeSync(lock);
     await box.swarm.poll();

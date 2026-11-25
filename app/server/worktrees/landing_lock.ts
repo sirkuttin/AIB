@@ -86,12 +86,14 @@ export async function lockChats(
   title: string,
   owner: string,
   lock = newLockId(),
+  /** A builder's landing (a subagent or helper that finished): the gate is the one of Connection.builderLandingReason, not an idle chat. */
+  builder = false,
 ): Promise<{ held: Held; busy: null } | { held: null; busy: [string, string] }> {
   const taken: string[] = [];
   for (const id of ids) {
     let why = 'the chat did not answer';
     try {
-      const [code, payload] = await host.liveCall('landing-lock', { id, lock, owner, title, ttlMs: timing.ttlMs });
+      const [code, payload] = await host.liveCall('landing-lock', { id, lock, owner, title, ttlMs: timing.ttlMs, ...(builder ? { builder: true } : {}) });
       if (code === 200 && isDict(payload)) why = payload.ok ? '' : s(payload.reason) || 'busy';
       else if (code === 400) why = ''; // no such chat (it closed meanwhile): nothing to hold
     } catch (error) {

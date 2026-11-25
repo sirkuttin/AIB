@@ -916,6 +916,8 @@ function toolEnded(update: Json, claude: boolean): boolean {
 /** A tool AIB has seen in this chat: whether it is a shell command, its last status, when it began, which prompt turn it was in. */
 interface ToolSeen {
   shell: boolean;
+  /** An edit-style call (ACP kind edit / delete / move): Claude Write and Edit, Codex apply_patch, Gemini write_file and replace. */
+  edit?: boolean;
   /** Claude Code's tool name (Bash, PowerShell, Edit, mcp__x__y), or null: allow rules pick the shell parser by it. */
   toolName?: string | null;
   status: string;
@@ -3443,8 +3445,10 @@ export class Connection {
       // Never an MCP tool or WebFetch, whatever kind it reports.
       const shell = isStr(toolName) ? toolName === 'Bash' || toolName === 'PowerShell' : get(update, 'kind') === 'execute';
       const parent = isDict(claude) ? get(claude, 'parentToolUseId') : null;
+      const toolKind = get(update, 'kind');
       seen = {
         shell,
+        edit: toolKind === 'edit' || toolKind === 'delete' || toolKind === 'move',
         toolName: isStr(toolName) ? toolName : null,
         status: '',
         title: isStr(get(update, 'title')) ? get(update, 'title') as string : '',
@@ -5749,13 +5753,38 @@ export class Connection {
   }
 
   /**
+   * The gate of a builder's landing (a subagent or a helper that finished): '' when its work may land now, even while this chat's turn
+   * runs (owner 2026-11-25: it lands soon after the builder ends, and the agent is told through the steer lane). Only what could
+   * clash with the files changing under the agent counts: one of its own edit or shell calls still open (the same for every provider:
+   * ACP tool calls), or a background shell of this chat that may be reading the folder (a test run, a build). A turn that merely runs,
+   * messages waiting, and other subagents at work never hold it back.
+   */
+  builderLandingReason(): string {
+    if (this.closed || !this.ready) return 'the chat is not open';
+    if (this.busy) {
+      for (const [id, seen] of this.#tools) {
+        if (!seen.main || seen.parent || seen.turn !== this.promptSeq || this.#bgTools.has(id)) continue;
+        if (seen.status === 'completed' || seen.status === 'failed') continue;
+        if (seen.edit) return 'the agent is editing a file';
+        if (seen.shell) return 'the agent is running a command';
+      }
+    }
+    if (this.backgroundShellsRunning()) return 'a background process is running';
+    for (const [id, background] of this.#bgTools) {
+      const seen = this.#tools.get(id);
+      if (background.state === 'running' && (!seen || (seen.main && !seen.parent))) return 'a background process is running';
+    }
+    return '';
+  }
+
+  /**
    * One step: if the chat is idle, set the lock and answer ''; else the reason, and nothing changes. The same id may take it again
    * (a renewal). It ends by itself after `ttlMs` without a renewal (the web process died mid-landing; its journal finishes the rest).
    */
-  landingLock(id: string, owner: string, title: string, ttlMs: number): string {
+  landingLock(id: string, owner: string, title: string, ttlMs: number, builder = false): string {
     if (this.landing && this.landing.id !== id) return `“${this.landing.title}” is landing`;
     if (!this.landing) {
-      const why = this.landingIdleReason();
+      const why = builder ? this.builderLandingReason() : this.landingIdleReason();
       if (why) return why;
       this.landing = { id, owner, title, at: Date.now() / 1000 };
       this.queue.landing = title || 'a helper';

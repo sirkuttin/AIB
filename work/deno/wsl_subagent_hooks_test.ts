@@ -222,9 +222,12 @@ Deno.test({
     assertEquals(runGit(lab.work, 'status', '--porcelain').trim(), '', 'the project folder still has none of it');
     assert(!exists(lab.work + SEP + 'sub.txt'));
 
-    // PostToolUse and SubagentStop are hints; the stop makes the record done
-    assertEquals((await hook('post-agent', { tool_use_id: 'toolu_1', tool_response: { agentId: 'a1', status: 'completed' } })).status, 200);
+    // SubagentStop is a hint only (another hook may block it); the foreground call's PostToolUse is the end and makes the record done
     assertEquals((await hook('subagent-stop', { agent_id: 'a1', agent_type: 'general-purpose' })).status, 200);
+    assertEquals(mirrors(lab)[0].state, 'running', 'a SubagentStop alone is not the end (in the distro too)');
+    await lab.swarm.poll();
+    assert(!exists(lab.work + SEP + 'sub.txt'), 'a builder still working did not land');
+    assertEquals((await hook('post-agent', { tool_use_id: 'toolu_1', tool_response: { agentId: 'a1', status: 'completed' } })).status, 200);
     assertEquals(mirrors(lab)[0].state, 'done');
 
     // the parent is idle: the swarm lands it in the distro's project folder, one commit, its own work only
@@ -273,6 +276,7 @@ Deno.test({
     const worktree = lab.win(rec.wsl!.linux.path);
     commit(worktree, 'tracked.txt', 'subagent line\n', 'subagent edit');
     await hook('subagent-stop', { agent_id: 'b1', agent_type: 'general-purpose' });
+    await hook('post-agent', { tool_use_id: 'toolu_b1', tool_response: { agentId: 'b1', status: 'completed' } });
     commit(lab.work, 'tracked.txt', 'main line\n', 'main edit'); // the folder moved on, on the same line
     await lab.swarm.poll();
     await until(() => notes(c).some((n) => n.includes("couldn't land")), 'the conflict told', 20);

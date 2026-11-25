@@ -344,7 +344,7 @@ export function hookSettings(forwarder: string, addressFile: string, options: { 
 
 /** The system prompt line for a chat whose subagents get their own worktree (design 2.5). */
 export const SUBAGENT_PROMPT = 'Subagents that edit files work in their own git worktree. AIB merges their changes into this folder when ' +
-  'your turn ends; do not merge, cherry-pick or copy files from a subagent\'s worktree yourself.';
+  'the subagent finishes, and tells you which files changed; do not merge, cherry-pick or copy files from a subagent\'s worktree yourself.';
 
 /**
  * The chat line for a typed `/name` that runs as a forked subagent (connection.ts forkSkillRefusal): typed by the user, a fork skill

@@ -29,6 +29,7 @@ import * as wt from './worktrees.ts';
 import { GitError, type WorktreeRecord } from './worktrees.ts';
 import { isdir, join, normcase } from '../platform/ospath.ts';
 import { pathStr } from '../platform/pypath.ts';
+import { processList } from '../platform/process_info.ts';
 import { pathOf, realpath } from '../state/paths.ts';
 import { toolRef } from '../artifacts/tool_ref.ts';
 import { entriesOf, readJsonFile, saveJson } from '../state/json.ts';
@@ -79,6 +80,8 @@ export interface MergeHost {
  */
 export interface MergeOptions {
   held?: string[];
+  /** A builder's landing (a subagent or helper that finished): the folder's other chats are held by the builder gate, not by being idle. */
+  builder?: boolean;
   journal?: (stage: string, data: Record<string, unknown>) => Promise<void> | void;
 }
 
@@ -182,6 +185,52 @@ export async function folderState(cwd: string): Promise<string> {
     }
   }
   return '';
+}
+
+/** Marks a waitForFolder answer that is not a wait but a stale lock (the rest is the message). */
+const STALE_LOCK = 'stale:';
+
+/**
+ * How a builder's landing waits for the folder (index.lock exists, a merge or rebase runs): up to `waitMs`, looking again after a
+ * growing pause, inside the one attempt. A lock file older than `staleAfterS` while no git process runs is stale (it never clears by
+ * itself): the landing stops waiting and the main agent is told once (swarm/service.ts, code stale_lock). Tests set these.
+ */
+export const gitWait = {
+  waitMs: 30_000,
+  stepsMs: [200, 400, 800, 1600, 3200],
+  staleAfterS: 180,
+  /** True when a git process runs on this machine, false when none does, null when that can't be told. */
+  gitRunning: async (): Promise<boolean | null> => {
+    try {
+      if (Deno.build.os === 'windows') return processList().some((p) => /^git(\.exe)?$/i.test(p.exe));
+      const out = await new Deno.Command('pgrep', { args: ['-x', 'git'], stdout: 'null', stderr: 'null' }).output();
+      return out.code === 0;
+    } catch {
+      return null;
+    }
+  },
+};
+
+/** '' when the folder is free; else why not (after waiting `gitWait.waitMs`), or STALE_LOCK + message for a stale index.lock. */
+export async function waitForFolder(folder: string): Promise<string> {
+  const start = Date.now();
+  for (let step = 0;; step++) {
+    const why = await folderState(folder);
+    if (!why) return '';
+    const lock = pathOf(await gitDir(folder), 'index.lock');
+    if (exists(lock)) {
+      let age = 0;
+      try {
+        age = (Date.now() - (Deno.statSync(lock).mtime?.getTime() ?? Date.now())) / 1000;
+      } catch { /* gone meanwhile */ }
+      if (age >= gitWait.staleAfterS && (await gitWait.gitRunning()) === false) {
+        return `${STALE_LOCK}A stale index.lock is in the folder that has the base branch (${lock}); no git process is running`;
+      }
+    }
+    const left = gitWait.waitMs - (Date.now() - start);
+    if (left <= 0) return why;
+    await new Promise((r) => setTimeout(r, Math.min(left, gitWait.stepsMs[Math.min(step, gitWait.stepsMs.length - 1)])));
+  }
 }
 
 /** Paths git status lists in `cwd` (changed, staged and untracked; both names of a rename). */
@@ -1258,7 +1307,9 @@ async function saveLocalVersions(chat: Chat, lo: LocalOnly, version: string, pat
 async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResult> {
   const folder = await baseCheckout(chat.project, chat.base);
   if (folder) {
-    const why = await folderState(folder);
+    // a builder's landing waits for the busy folder silently (owner 2026-11-25: no "Couldn't land yet" lines for a passing lock)
+    const why = chat.options.builder ? await waitForFolder(folder) : await folderState(folder);
+    if (why.startsWith(STALE_LOCK)) throw new Refused(why.slice(STALE_LOCK.length), 'stale_lock');
     if (why) throw new Refused(why[0].toUpperCase() + why.slice(1), 'locked');
   }
   const own = chat.head || await rev(chat.wt, 'HEAD');
@@ -1310,7 +1361,7 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
     }
   }
   // Build plan 2.3: no chat that works in the folder may start a turn while it changes; one that works now means this waits.
-  const holds = folder ? await holdFolderChats(chat.aib, folder, title, [chat.id, ...(chat.options.held ?? [])], `merge:${chat.key}`) : null;
+  const holds = folder ? await holdFolderChats(chat.aib, folder, title, [chat.id, ...(chat.options.held ?? [])], `merge:${chat.key}`, !!chat.options.builder) : null;
   try {
     const out = await landHeld(chat, folder, tip, head, byTree, files, landed, count, title);
     if (holds && out.state === 'merged') await toldFilesChanged(chat, holds, tip, str(out.tip), title);
@@ -1327,12 +1378,13 @@ export async function holdFolderChats(
   title: unknown,
   skip: string[],
   owner: string,
+  builder = false,
 ): Promise<Held | null> {
   const held = new Set(skip);
   const chats = (host.folderChats ? await host.folderChats(folder) : []).filter((c) => !held.has(c.id));
   if (!chats.length) return null;
   const name = pyStrip(pyStr(title || '')) || 'a chat';
-  const got = await lockChats(host, chats.map((c) => c.id), name, owner);
+  const got = await lockChats(host, chats.map((c) => c.id), name, owner, undefined, builder);
   if (got.held) return got.held;
   const busy = chats.find((c) => c.id === got.busy[0]);
   throw new Refused(

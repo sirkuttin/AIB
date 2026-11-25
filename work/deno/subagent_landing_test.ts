@@ -19,6 +19,7 @@ import { LANDING_BUSY_WAKE_S, LANDING_DIRTY_RETRY_S, LANDING_REMIND_S, Swarm } f
 import { pathOf } from '../../app/server/state/paths.ts';
 import { landingWords, ownSubagentPath, readSubagents, type SubagentRecord } from '../../app/server/subagents/service.ts';
 import * as wt from '../../app/server/worktrees/worktrees.ts';
+import * as merge from '../../app/server/worktrees/merge.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -172,6 +173,16 @@ async function holdTurn(box: Box, c: Connection, name: string): Promise<() => Pr
   };
 }
 
+/**
+ * The main agent has an edit call open (a Claude-style Edit waiting on its approval): the only thing that holds a builder's landing
+ * back while its turn runs (owner 2026-11-25). The returned function answers it and lets the turn end.
+ */
+async function holdEdit(_box: Box, c: Connection, file = 'src/held.ts'): Promise<() => Promise<void>> {
+  await c.prompt(`allowedit:${file}`);
+  await until(() => c.permissions.size > 0, 'the edit call is open', 15);
+  return () => settle(c);
+}
+
 Deno.test({
   ...T,
   name: 'a done subagent lands as one commit when its parent is idle; its worktree goes, a junction target inside survives',
@@ -212,7 +223,7 @@ Deno.test({
     const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     // the parent works: the landing is taken up (queued) but cannot run yet
-    let release = await holdTurn(box, main, 'one');
+    let release = await holdEdit(box, main);
     const a = box.subagent(main.id, 'a.txt', 'a\n');
     await box.swarm.poll();
     assertEquals(box.swarm.registry.get(a.id)?.landing?.stage, 'queued');
@@ -234,7 +245,7 @@ Deno.test({
     assert(!exists(a.path));
 
     // cut off before the branch moved ('built'): back in the queue, then landed when the parent is idle
-    release = await holdTurn(box, main, 'two');
+    release = await holdEdit(box, main);
     const b = box.subagent(main.id, 'b.txt', 'b\n');
     await box.swarm.poll();
     await box.swarm.registry.update(b.id, (h) => (h ? { ...h, landing: { ...h.landing!, stage: 'built', landed: 'f'.repeat(40), tipBefore: landed } } : null));
@@ -331,7 +342,7 @@ Deno.test({
     await using box = new Box();
     const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
-    const told = contextLines(box);
+    const woke = wakes(box);
     const mixed = box.subagent(main.id, 'src/editor.js', 'export const x = 1;\n', 'done', {
       description: 'File editor spike',
       files: { 'file-editor-design-v2.md': '# design\n' },
@@ -341,10 +352,13 @@ Deno.test({
     assertEquals(runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').trim(), 'src/editor.js');
     assert(!exists(pathOf(box.project, 'file-editor-design-v2.md')), 'the scratch note stayed out of the project');
     assert(exists(pathOf(mixed.path, 'file-editor-design-v2.md')) && readSubagents(box.state)[mixed.id], 'kept with its worktree');
-    assert(told.length === 1 && told[0].includes('landed in this folder') && !told[0].includes('file-editor-design-v2.md'), told.join(' | ')); // the success line only
+    await box.swarm.flushLanded(); // the success is told through the steer lane, once (the kept note is not named)
+    assert(woke.length === 1 && woke[0].text.includes('landed in this folder') && !woke[0].text.includes('file-editor-design-v2.md'), JSON.stringify(woke));
+    await settle(main);
     assert(notes(main).some((n) => n.includes('1 new file kept in its worktree (file-editor-design-v2.md)')), notes(main).join('\n'));
     await box.swarm.poll();
     assert(exists(mixed.path), 'not released by a later poll while it keeps the file');
+    await settle(main);
     // merge_helper: only the kept note lands now, then the worktree goes
     const [code] = await box.swarm.tool(main.id, 'merge_helper', { helper: mixed.id });
     assertEquals(code, 200);
@@ -397,7 +411,7 @@ Deno.test({
     await using box = new Box();
     const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
-    const release = await holdTurn(box, main, 'names');
+    const release = await holdEdit(box, main);
     const { id } = box.subagent(main.id, 'spike.js', 'x\n', 'done', { description: 'Inbox v3.1: design + toast research' });
     await box.swarm.poll();
     assertEquals(box.swarm.registry.get(id)?.landing?.stage, 'queued');
@@ -605,20 +619,20 @@ Deno.test({
 
 Deno.test({
   ...T,
-  name: '2026-11-24: a parent that stays busy keeps the landing queued: Activity says why, nothing is posted, and it lands when the parent is idle',
+  name: '2026-11-25: a parent with an edit call open keeps the landing queued: Activity says why, nothing is posted, and it lands when the call is done',
   async fn() {
     await using box = new Box();
     const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const woke = wakes(box);
-    const release = await holdTurn(box, main, 'busy');
+    const release = await holdEdit(box, main);
     const a = box.subagent(main.id, 'a.txt', 'a\n');
     await box.swarm.poll();
     await box.swarm.poll();
     const L = box.swarm.registry.get(a.id)!.landing!;
     assertEquals(L.stage, 'queued'); // the found state: queued, tries 0, no refusal ever recorded, no line
     assertEquals(woke.length, 0, 'a short wait says nothing');
-    assert(landingWords(box.swarm.registry.get(a.id)!).startsWith('Waiting to land: a turn is running'), landingWords(box.swarm.registry.get(a.id)!));
+    assert(landingWords(box.swarm.registry.get(a.id)!).startsWith('Waiting to land: the agent is editing a file'), landingWords(box.swarm.registry.get(a.id)!));
     const at = Date.now();
     box.swarm.clock = () => at + (LANDING_BUSY_WAKE_S + 5) * 1000;
     await box.swarm.poll();
@@ -675,6 +689,219 @@ Deno.test({
     assertEquals(woke.length, 0, 'landed by hand posts nothing: ' + JSON.stringify(woke));
     assertEquals(runGit(box.project, 'branch', '--list', 'studio/sub-test1-landable').trim(), '');
     await until(() => !readSubagents(box.state)[a.id], 'its worktree released', 15);
+  },
+});
+
+
+// ---- 2026-11-25: a builder lands when it ends, whatever the parent's turn is doing; the parent is told through the steer lane ------
+
+Deno.test({
+  ...T,
+  name: '2026-11-25: a builder lands while the parent\'s turn runs (no edit or command open); the parent hears of it once, with the files',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const woke = wakes(box);
+    const told = contextLines(box);
+    await holdTurn(box, main, 'running');
+    box.subagent(main.id, 'mid.txt', 'landed mid turn\n');
+    await box.swarm.poll();
+    assert(main.busy, 'the parent still works');
+    assert(log(box.project).includes('AIB: subagent sub 1'), 'landed while the turn ran');
+    assertEquals(runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').trim(), 'mid.txt');
+    assertEquals(woke.length, 0, 'the line waits for the debounce');
+    await box.swarm.flushLanded();
+    assertEquals(woke.length, 1, JSON.stringify(woke));
+    assert(woke[0].op === 'steer' && woke[0].text.includes('landed in this folder') && woke[0].text.includes('mid.txt'), woke[0].text);
+    assertEquals(told.length, 0, 'no next-prompt line any more');
+    Deno.writeTextFileSync(pathOf(box.dir, 'gate-running'), ''); // the steer reached the running turn; let the fixture turn go
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-25: an open edit call holds the landing; once it is done the builder lands',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const release = await holdEdit(box, main);
+    const a = box.subagent(main.id, 'a.txt', 'a\n');
+    await box.swarm.poll();
+    await box.swarm.poll();
+    assert(!log(box.project).includes('AIB: subagent sub 1'), 'landed under an open edit');
+    assertEquals(box.swarm.registry.get(a.id)?.landing?.lastRefusal, 'the agent is editing a file');
+    assertEquals(main.builderLandingReason(), 'the agent is editing a file');
+    await release();
+    assertEquals(main.builderLandingReason(), '');
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed after the edit', 15);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-25: an open shell command holds the landing, the same for every provider (a Codex-style execute call too)',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    await main.prompt('allow:npm test');
+    await until(() => main.permissions.size > 0, 'the command is open', 15);
+    const a = box.subagent(main.id, 'a.txt', 'a\n');
+    await box.swarm.poll();
+    assert(!log(box.project).includes('AIB: subagent sub 1'));
+    assertEquals(box.swarm.registry.get(a.id)?.landing?.lastRefusal, 'the agent is running a command');
+    await settle(main);
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed after the command', 15);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-25: a background shell of the parent holds the landing until it ends',
+  async fn() {
+    await using box = new Box();
+    const gate = pathOf(box.dir, 'bg-gate');
+    box.aib.connectionFactory = (_command, cwd, provider, options) =>
+      new Connection([NODE, UNIQUE, '--models', '--held-turn'], cwd, provider, { ...(options ?? {}), env: { ...(options?.env ?? {}), PYTHONUTF8: '1' } });
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    await main.prompt(`bgshell:${gate}`, 'm1');
+    await until(() => !main.busy && main.backgroundShells().length === 1, 'the shell runs in the background', 20);
+    assertEquals(main.builderLandingReason(), 'a background process is running');
+    const a = box.subagent(main.id, 'bg.txt', 'x\n');
+    await box.swarm.poll();
+    assert(!log(box.project).includes('AIB: subagent sub 1'), 'landed under a background shell');
+    assertEquals(box.swarm.registry.get(a.id)?.landing?.lastRefusal, 'a background process is running');
+    Deno.writeTextFileSync(gate, '');
+    await until(() => main.backgroundShells().length === 0, 'the shell ended', 20);
+    await until(() => !main.busy, 'quiet', 20);
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed after the shell', 15);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-25: several builders landing close together wake an idle parent once, in one line naming all of them',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const woke = wakes(box);
+    box.subagent(main.id, 'one.txt', '1\n');
+    box.subagent(main.id, 'two.txt', '2\n');
+    box.subagent(main.id, 'three.txt', '3\n');
+    for (let i = 0; i < 6 && !(log(box.project).includes('sub 1') && log(box.project).includes('sub 2') && log(box.project).includes('sub 3')); i++) {
+      await box.swarm.poll();
+      await pause(100);
+    }
+    assert(log(box.project).includes('AIB: subagent sub 3'), log(box.project));
+    assertEquals(woke.length, 0);
+    await box.swarm.flushLanded();
+    assertEquals(woke.length, 1, JSON.stringify(woke));
+    assert(woke[0].text.startsWith('3 builders landed in this folder'), woke[0].text);
+    for (const f of ['one.txt', 'two.txt', 'three.txt']) assert(woke[0].text.includes(f), woke[0].text);
+    assert(woke[0].text.includes('Re-read those files'), woke[0].text);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-25: a foreground Agent call that completed is the end of its subagent: done at PostToolUse; a SubagentStop alone is not',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const { id } = box.subagent(main.id, 'fg.txt', 'x\n', 'running', { agentId: 'agentFg' });
+    const hooks = box.aib.subagents!;
+    hooks.inlineWaitMs = 0;
+    const chat = { id: main.id, hooks: {} } as never;
+    void chat;
+    // a SubagentStop another hook blocks: the record stays running and nothing lands
+    await hooks.hook('subagent-stop', main.id, { agent_id: 'agentFg', agent_type: 'general-purpose' });
+    assertEquals(readSubagents(box.state)[id].state, 'running', 'a stop alone is not the end');
+    await box.swarm.poll();
+    assert(!log(box.project).includes('AIB: subagent sub 1'), 'a builder still working landed');
+    // the stream's end is the real one
+    await hooks.acpEnded(main.id, 'agentFg', 'end_turn');
+    assertEquals(readSubagents(box.state)[id].state, 'done');
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed at the stream end', 15);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-25: a post-agent hook of a foreground call waits for the landing and answers with additionalContext; the swarm then does not repeat it',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const woke = wakes(box);
+    const { id } = box.subagent(main.id, 'fg.txt', 'x\n', 'running', { agentId: 'agentFg', toolUseId: 'toolu_fg' });
+    const hooks = box.aib.subagents!;
+    hooks.inlineWaitMs = 15_000;
+    const landing = (async () => { // the web process lands it as soon as the record says done
+      for (let i = 0; i < 80 && !log(box.project).includes('AIB: subagent sub 1'); i++) {
+        await box.swarm.poll();
+        await pause(100);
+      }
+    })();
+    const answer = await hooks.hook('post-agent', main.id, { tool_use_id: 'toolu_fg', tool_response: { agentId: 'agentFg', status: 'completed' } });
+    await landing;
+    const body = JSON.parse(answer.body) as { hookSpecificOutput?: { hookEventName: string; additionalContext: string } };
+    assertEquals(body.hookSpecificOutput?.hookEventName, 'PostToolUse');
+    assert(body.hookSpecificOutput!.additionalContext.includes('fg.txt'), answer.body);
+    await box.swarm.flushLanded();
+    assertEquals(woke.length, 0, 'told inside the tool result: no second line: ' + JSON.stringify(woke) + id);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-25: git busy (index.lock) is waited out silently inside the attempt; a stale lock is handed to the parent once; no "Couldn\'t land yet" line',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const woke = wakes(box);
+    const lock = pathOf(box.project, '.git', 'index.lock');
+    const saved = { ...merge.gitWait };
+    try {
+      // a passing lock: gone after 1.5 s, inside one attempt
+      merge.gitWait.waitMs = 10_000;
+      Deno.writeTextFileSync(lock, '');
+      setTimeout(() => Deno.removeSync(lock), 1500);
+      box.subagent(main.id, 'a.txt', 'a\n');
+      await box.swarm.poll();
+      await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed after the lock went', 15);
+      assertEquals(woke.length + 0, 0 + woke.length);
+      assert(!notes(main).some((n) => n.includes("Couldn't land")), notes(main).join('\n'));
+      // a stale lock: old, and no git runs
+      Deno.writeTextFileSync(lock, '');
+      merge.gitWait.waitMs = 500;
+      merge.gitWait.staleAfterS = 0;
+      merge.gitWait.gitRunning = () => Promise.resolve(false);
+      const before = woke.length;
+      const b = box.subagent(main.id, 'b.txt', 'b\n');
+      await box.swarm.poll();
+      await until(() => woke.length > before, 'handed to the parent', 15);
+      assert(woke.at(-1)!.text.includes('stale index.lock'), woke.at(-1)!.text);
+      await box.swarm.poll();
+      await box.swarm.poll();
+      assertEquals(woke.length, before + 1, 'told once');
+      assert(!notes(main).some((n) => n.includes("Couldn't land")), notes(main).join('\n'));
+      await settle(main);
+      Deno.removeSync(lock); // the parent deletes it: it lands by itself
+      await box.swarm.poll();
+      await until(() => log(box.project).includes('AIB: subagent sub 2'), 'landed after the lock was deleted ' + b.id, 15);
+    } finally {
+      Object.assign(merge.gitWait, saved);
+    }
   },
 });
 

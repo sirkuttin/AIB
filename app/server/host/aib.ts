@@ -3984,7 +3984,7 @@ export class Aib {
       const lock = String(need(body, 'lock'));
       const ttl = Math.min(Math.max(Number(body.ttlMs) || LANDING_TTL_MS, 50), 10 * 60_000);
       if (name === 'landing-lock') {
-        const why = connection.landingLock(lock, String(body.owner ?? ''), String(body.title ?? '').slice(0, 120), ttl);
+        const why = connection.landingLock(lock, String(body.owner ?? ''), String(body.title ?? '').slice(0, 120), ttl, body.builder === true);
         return [200, { ok: !why, reason: why }];
       }
       if (name === 'landing-renew') return [200, { ok: connection.landingRenew(lock, ttl) }];

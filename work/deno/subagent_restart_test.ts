@@ -147,7 +147,7 @@ Deno.test('cap: only live subagents count; finished (waiting to land) and stoppe
     assertEquals((await decision(99)).permissionDecisionReason, TEXTS.cap, `${MAX_PER_CHAT} running: the next is refused`);
     // they all finish (beta 11: done-but-unlanded ones kept the slot) or are stopped (kept for the main agent)
     for (let n = 0; n < MAX_PER_CHAT; n++) {
-      if (n % 2) await service.hook('subagent-stop', chat.id, { agent_id: `cap${n}`, agent_type: 'general-purpose' });
+      if (n % 2) await service.acpEnded(chat.id, `cap${n}`, 'end_turn');
       else await service.acpEnded(chat.id, `cap${n}`, 'cancelled');
     }
     const states = Object.values(readSubagents(state)).filter((r) => r.agentId.startsWith('cap')).map((r) => r.state).sort();
@@ -187,7 +187,7 @@ Deno.test('restart: a new chat of the same conversation adopts the old one\'s su
     await start(old, 'agLost', 'Build Inbox v3.1 phases 1-3');
     await start(old, 'agLive', 'still at work');
     await start(old, 'agEnded', 'ended before the restart');
-    await service.hook('subagent-stop', old.id, { agent_id: 'agEnded', agent_type: 'general-purpose' });
+    await service.acpEnded(old.id, 'agEnded', 'end_turn');
     await start(stranger, 'agOther', 'another conversation');
     const byAgent = (agent: string) => Object.values(readSubagents(state)).find((r) => r.agentId === agent)!;
     // the PC crashed; AIB opened the conversation again under a new live id. The old chat's hooks now answer 503
@@ -211,7 +211,7 @@ Deno.test('restart: a new chat of the same conversation adopts the old one\'s su
     assertEquals(byAgent('agLive').state, 'running', 'still writing its transcript: left running');
     assertEquals(byAgent('agEnded').state, 'done');
     // the new chat's own hooks and stream now reach the adopted one
-    await service.hook('subagent-stop', fresh.id, { agent_id: 'agLive', agent_type: 'general-purpose' });
+    await service.acpEnded(fresh.id, 'agLive', 'end_turn');
     assertEquals(byAgent('agLive').state, 'done');
     assertEquals(service.activity(fresh.id).agDone, { where: 'Own worktree', landing: 'Lands when the turn ends' });
     // a later call is a no-op
