@@ -560,7 +560,7 @@ export class SubagentWorktrees {
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);
         log.warning('wsl: subagent hook %s failed: %s', event, why);
-        return event === 'pre-tool' || event === 'codex-pre-tool'
+        return event === 'pre-tool' || event === 'codex-pre-tool' || event === 'qwen-pre-tool'
           ? deny(`AIB couldn't make a worktree for this subagent in the distro: ${why.slice(0, 300)}`)
           : text('AIB could not answer this hook', 500);
       }
@@ -667,6 +667,33 @@ export class SubagentWorktrees {
         return await this.#patch(own.id, { state: 'running', continuedAt: now() });
       }
       const ready = readyFor(mine, agentId);
+      if (!ready) return null;
+      return await this.#patch(ready.id, {
+        agentId,
+        state: 'running',
+        boundAt: now(),
+        ...(agentType && !ready.agentType ? { agentType: agentType.slice(0, 200) } : {}),
+      });
+    });
+  }
+
+  /**
+   * Qwen Code (subagents/qwen.ts): the subagent `agentId` (`<type>-<its Agent call's id>`) starts or makes a call: its own record when
+   * it has one (a done one runs again), else the prepared worktree of ITS call (the record whose toolUseId the agentId ends with:
+   * AIB set that worktree as the call's working_dir, so a worktree of another call must never be bound). Null: none (Explore).
+   */
+  async bindByCall(chatId: string, agentId: string, agentType = ''): Promise<SubagentRecord | null> {
+    if (!/^[\x21-\x7e]{1,200}$/.test(agentId)) return null;
+    return await this.#lockOf(chatId).run(async () => {
+      const mine = this.ofChat(chatId);
+      const own = mine.find((r) => r.agentId === agentId && wt.lexists(r.path));
+      if (own) {
+        if (own.state === 'running') return own;
+        if (own.state !== 'done') return null;
+        return await this.#patch(own.id, { state: 'running', continuedAt: now() });
+      }
+      const ready = mine.filter((r) => r.state === 'prepared' && !!r.toolUseId && wt.lexists(r.path) && agentId.endsWith('-' + r.toolUseId))
+        .sort((a, b) => a.createdAt - b.createdAt)[0];
       if (!ready) return null;
       return await this.#patch(ready.id, {
         agentId,

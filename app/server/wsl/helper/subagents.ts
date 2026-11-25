@@ -19,7 +19,8 @@ import { keepWork, workDiff, workStatus } from '../../worktrees/subagent_work.ts
 import { deny, ownSubagentPath, type SubagentChat, SubagentWorktrees } from '../../subagents/service.ts';
 import { claudeConfigDir, readClaudeSetup, subagentsOffSettings } from '../../subagents/claude_config.ts';
 import * as codexSub from '../../subagents/codex.ts';
-import { isCodexFamily } from '../../agents/claude_family.ts';
+import * as qwenSub from '../../subagents/qwen.ts';
+import { isCodexFamily, isQwenFamily } from '../../agents/claude_family.ts';
 import { isDict } from '../../core/py.ts';
 import { onWindowsDrive } from './worktrees.ts';
 import { BAD_PARAMS, type Handlers, RpcError, str } from './rpc.ts';
@@ -31,6 +32,7 @@ type Json = Record<string, unknown>;
 const ID = /^[A-Za-z0-9_-]{1,200}$/;
 const CLAUDE_EVENTS = ['pre-tool', 'pre-shell', 'worktree-create', 'post-agent', 'subagent-stop'];
 const CODEX_EVENTS = ['codex-pre-tool', 'codex-subagent-start', 'codex-subagent-stop'];
+const QWEN_EVENTS = qwenSub.QWEN_HOOK_EVENTS;
 
 function absPath(value: unknown, name: string): string {
   if (typeof value !== 'string' || !value || value.length > 4096 || value.includes('\0') || !osp.isabs(value)) {
@@ -168,6 +170,16 @@ export function subagentMethods(data: string): Handlers {
             : { status: 500, body: 'AIB could not answer this hook', type: 'text/plain' };
         }
       }
+      if (QWEN_EVENTS.includes(event)) {
+        if (!isQwenFamily(chat.provider)) return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
+        try {
+          return { ...(await qwenSub.qwenHook(service, event, chat, body)) };
+        } catch (error) {
+          return event === 'qwen-pre-tool'
+            ? { ...deny(`AIB couldn't check this call against the subagent's worktree: ${error instanceof Error ? error.message : error}`) }
+            : { status: 500, body: 'AIB could not answer this hook', type: 'text/plain' };
+        }
+      }
       if (!CLAUDE_EVENTS.includes(event)) throw new RpcError('event is not a hook event', BAD_PARAMS);
       return { ...(await service.hook(event, chat.id, body)) };
     },
@@ -180,7 +192,7 @@ export function subagentMethods(data: string): Handlers {
      */
     'subagent.setup': async (p) => {
       const agent = str(p, 'agent');
-      if (agent !== 'claude' && agent !== 'codex') throw new RpcError('agent must be claude or codex', BAD_PARAMS);
+      if (agent !== 'claude' && agent !== 'codex' && agent !== 'qwen') throw new RpcError('agent must be claude, codex or qwen', BAD_PARAMS);
       const project = absPath(p.project, 'project');
       const folder = absPath(p.folder ?? p.project, 'folder');
       for (const [path, why] of [[project, 'the project'], [folder, 'the chat']]) {
@@ -188,7 +200,7 @@ export function subagentMethods(data: string): Handlers {
       }
       const env: Record<string, string> = { ...Deno.env.toObject() };
       if (isDict(p.env)) {
-        for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CODEX_CONFIG']) {
+        for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CODEX_CONFIG', 'QWEN_HOME', 'QWEN_CODE_SYSTEM_SETTINGS_PATH']) {
           const v = (p.env as Json)[name];
           if (typeof v === 'string' && v.length < 200_000 && !v.includes('\0')) env[name] = v;
         }
@@ -198,6 +210,34 @@ export function subagentMethods(data: string): Handlers {
         const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
         if (top.returncode !== 0 || !wt.same(top.stdout.trim(), folder)) git = 'not a git project';
         else if ((await wt.git(['rev-parse', '--verify', '-q', 'HEAD'], folder, { check: false })).returncode !== 0) git = 'the repository has no commits yet';
+      }
+      if (agent === 'qwen') {
+        // The distro's own Qwen setup: its settings tiers say whether hooks are off, and its system settings file (if any) is merged
+        // into the chat's own one, which is written HERE (the file must be on the distro's disk for Qwen to read it).
+        const setup = qwenSub.readQwenSetup(project, env, 'linux');
+        const fragments = isDict(p.qwen) ? p.qwen as Json : {};
+        const pick = (name: string) => {
+          const f = isDict(fragments[name]) ? fragments[name] as Json : null;
+          return f ? { hooks: isDict(f.hooks) ? f.hooks as Json : null, deny: Array.isArray(f.deny) ? f.deny.filter((x): x is string => typeof x === 'string') : [] } : null;
+        };
+        const off = !!setup.hooksOff || !!setup.systemError;
+        const fragment = git ? null : off ? pick('off') : pick('on'); // not a git project: nothing changes for its subagents
+        let settingsFile = '';
+        if (fragment && typeof p.chatId === 'string' && ID.test(p.chatId)) {
+          settingsFile = qwenSub.writeSettingsFile(qwenSub.settingsFileOf(data, p.chatId), qwenSub.mergeSystemSettings(setup.system, fragment));
+        }
+        return {
+          git,
+          readOnly: qwenSub.QWEN_READ_ONLY_TYPES,
+          userWorktreeHook: '',
+          hooksOff: setup.hooksOff,
+          configError: setup.systemError,
+          configDir: qwenSub.qwenHome(env),
+          deny: null,
+          config: null,
+          subFolder: '',
+          settingsFile,
+        };
       }
       if (agent === 'codex') {
         const setup = codexSub.readCodexSetup(project, env, 'linux');
@@ -217,6 +257,7 @@ export function subagentMethods(data: string): Handlers {
           deny: null,
           config: setup.config,
           subFolder,
+          settingsFile: '',
         };
       }
       const setup = readClaudeSetup(project, env);
@@ -230,6 +271,7 @@ export function subagentMethods(data: string): Handlers {
         deny: setup.hooksOff ? subagentsOffSettings(project, env, setup.readOnly) : null,
         config: null,
         subFolder: '',
+        settingsFile: '',
       };
     },
 

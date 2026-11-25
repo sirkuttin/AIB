@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Helpers work in WSL projects: a lead chat in a WSL project starts helper agents (Claude, Codex or Gemini) that work in their own copy inside the distro and land into the project when they finish, with the same conflict handling, stop, Undo and unlanded-work actions as on Windows.
+- Qwen Code subagents that edit files work in their own git worktree, as Claude Code's do, on Windows and in WSL projects. AIB lands them when each one finishes. The read-only Explore subagent runs in the project folder with read tools only (no shell). Forks and nested subagents are off. If hooks are off in your Qwen settings, or AIB can't give Qwen its hooks, the agent tool is off for that chat and the chat says so. AIB's settings for it live in AIB's own folder, never in ~/.qwen.
 
 ## 0.15.0 beta (2026-11-24)
 
