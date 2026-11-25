@@ -264,7 +264,9 @@ for (const who of ['claude', 'codex'] as const) {
       try {
         await chat.prompt(`steer-wait:${gate}`, 'first');
         await until(async () => (await chat.state()).busy, 'working', LONG);
-        await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => e.getBoundingClientRect().width > 0)`, 15000, 'the menu button');
+        // the page's own working state (the Send tooltip appears with it): the menu button is there while idle too, and a menu
+        // opened before the page knows the turn runs holds only "Send later" (the flake: "the menu has 1 items, not 4")
+        await page.waitFor(`!!document.getElementById('send').title`, 15000, 'the page shows the turn is working');
         await typeOnly('clicked send now');
         await openMenu();
         await check(page, `${who}/1600 menu`, MENU);

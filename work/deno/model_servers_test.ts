@@ -503,7 +503,7 @@ Deno.test('Maki and Qwen Code entries start their normal adapter with the server
     await aib.connect('qwen@strata', lab.dir);
     await aib.connect('maki@strata', lab.dir);
     assertEquals(launched.map((l) => l.provider), ['qwen@strata', 'maki@strata']);
-    assertEquals(launched[0].env, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'm-b' });
+    assertEquals(launched[0].env, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'm-b', QWEN_CODE_LEGACY_MCP_BLOCKING: '1' });
     assertEquals(launched[1].env, { ANTHROPIC_BASE_URL: up.url, ANTHROPIC_API_KEY: KEY });
     const [qwenArgv] = await aib.agentLaunch('qwen@strata');
     assertEquals(qwenArgv.slice(-2), ['--auth-type', 'openai'], 'Qwen Code is told to use OpenAI auth (a stale selectedType in its settings cannot win)');
