@@ -968,8 +968,13 @@ async function treeLanding(chat: Chat, tip: string, head: string, title: unknown
   // A subagent's branch may hold other builders' branches that already landed on the folder branch as their own commits (it merged
   // them to build on them). Those are not its work: only its own commits are replayed on the tip.
   const sides = chat.detached ? await landedSides(chat, tip, head) : [];
+  // A builder that merged the folder branch into its own (to build on newer work) holds main's commits in its history. A tree merge
+  // against the start would re-apply them on a tip that moved on since; replaying only its own non-merge commits never does.
+  const mergedMain = chat.detached && !sides.length && !!strip(
+    (await git(['rev-list', '--merges', '-n', '1', `${chat.user}..${head}`, `^${tip}`], chat.wt, { check: false })).stdout,
+  );
   let tree = '';
-  if (sides.length) {
+  if (sides.length || mergedMain) {
     const replayed = await replayOwn(chat, tip, head, sides);
     if (replayed[0] === 'conflicts') return replayed;
     tree = replayed[1];
@@ -988,7 +993,7 @@ async function treeLanding(chat: Chat, tip: string, head: string, title: unknown
   const own = splitlines(
     (await git(['log', '--no-merges', '--reverse', '--format=%s', `${chat.user}..${logHead}`, `^${tip}`, ...sides.map((s) => '^' + s)], chat.wt))
       .stdout,
-  );
+  ).filter((subject) => subject !== SNAPSHOT_SUBJECT);
   const body = own.length
     ? 'Chat commits:\n' +
       own.slice(0, 30).map((subject) => '- ' + clip(subject, 120)).join('\n')
@@ -1037,10 +1042,13 @@ async function landedSides(chat: Chat, tip: string, head: string): Promise<strin
  * three-way merge of trees against its own parent: no worktree is touched. A commit whose change is in tip already replays to nothing.
  */
 async function replayOwn(chat: Chat, tip: string, head: string, sides: string[]): Promise<['ok', string] | ['conflicts', string[]]> {
-  const commits = pySplitWords(
-    (await git(['rev-list', '--no-merges', '--reverse', '--topo-order', `${chat.user}..${head}`, `^${tip}`, ...sides.map((s) => '^' + s)], chat.wt))
+  // the AIB snapshot commits (the main folder's uncommitted files) are not the builder's work; the one at `head` is: the builder's own
+  // uncommitted state, committed when it ended (subagent_land.ts)
+  const headSha = await rev(chat.wt, head);
+  const commits = splitlines(
+    (await git(['log', '--no-merges', '--reverse', '--topo-order', '--format=%H%x09%s', `${chat.user}..${head}`, `^${tip}`, ...sides.map((s) => '^' + s)], chat.wt))
       .stdout,
-  );
+  ).map((line) => line.split('\t')).filter(([sha, subject]) => subject !== SNAPSHOT_SUBJECT || sha === headSha).map(([sha]) => sha);
   let cur = tip;
   for (const commit of commits) {
     const done = await git(
@@ -1130,23 +1138,33 @@ async function withoutForeign(chat: Chat, tip: string, tree: string): Promise<st
  * with a snapshot commit of the main folder's uncommitted files, so merging it would commit those. '' when it can't be built.
  */
 export async function landableBranch(
-  spec: { project: string; worktree: string; start: string; head: string; branch: string },
+  spec: { project: string; worktree: string; start: string; head: string; branch: string; tip?: string },
   title: unknown,
 ): Promise<string> {
   const isSnapshot = strip((await git(['log', '-1', '--format=%s', spec.start], spec.project, { check: false })).stdout) === SNAPSHOT_SUBJECT;
-  const parent = isSnapshot ? await rev(spec.project, `${spec.start}^`) : spec.start;
+  let parent = isSnapshot ? await rev(spec.project, `${spec.start}^`) : spec.start;
   if (!parent || !spec.branch) return '';
+  // The builder merged the folder branch (`tip`, now) into its own: the last commit both share is the newest main it merged. Its own
+  // changes are everything after that, so the landable branch sits on it and never re-applies main's commits.
+  let base = spec.start;
+  if (spec.tip) {
+    const shared = strip((await git(['merge-base', spec.head, spec.tip], spec.worktree, { check: false })).stdout);
+    if (shared && !(await isAncestor(spec.worktree, shared, parent))) {
+      parent = shared;
+      base = shared;
+    }
+  }
   const chat = Chat.detachedOf({ stateDir: '', liveState: () => null, liveCall: () => [200, null] }, {
     id: '',
     key: 'landable',
     worktree: spec.worktree,
     project: spec.project,
-    start: spec.start,
+    start: base,
     head: spec.head,
     landOn: parent,
   });
   const done = await git(
-    ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${spec.start}`, parent, spec.head],
+    ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${base}`, parent, spec.head],
     spec.worktree,
     { check: false },
   );

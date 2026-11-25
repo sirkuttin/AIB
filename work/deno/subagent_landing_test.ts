@@ -557,6 +557,77 @@ for (const shape of ['fast-forward', 'merge commit']) {
   });
 }
 
+/** A commit in `dir` of `file`, whatever the folder's own git identity. */
+function commitFile(dir: string, file: string, body: string, subject: string): void {
+  write(dir, file, body);
+  runGit(dir, 'add', '--', file); // never the folder's other uncommitted files
+  runGit(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', subject);
+}
+
+for (const merges of [1, 3]) {
+  Deno.test({
+    ...T,
+    name: `a builder that merged main ${merges} time(s) mid-work (snapshot start) lands only its own commits after main moved on, with no conflict`,
+    async fn() {
+      await using box = new Box();
+      const main = await box.aib.connect('claude', box.project, null, {});
+      await settle(main);
+      const woke = wakes(box);
+      commitFile(box.project, 'shared.txt', 'main v0\n', 'main adds shared');
+      write(box.project, 'mine.txt', 'folder unsaved work\n'); // in the builder's AIB snapshot, never its work
+      const b = box.subagent(main.id, '', '', 'running', { seed: true, description: 'builder M' });
+      commitFile(b.path, 'own1.txt', 'own one\n', 'builder one');
+      for (let i = 1; i <= merges; i++) {
+        commitFile(box.project, 'shared.txt', `main v${i}\n`, `main edit ${i}`);
+        commitFile(box.project, `m${i}.txt`, `main file ${i}\n`, `main file ${i}`);
+        runGit(b.path, 'merge', '-q', '--no-edit', 'main'); // the builder takes in main to build on it
+        commitFile(b.path, `own${i + 1}.txt`, `own ${i + 1}\n`, `builder ${i + 1}`);
+      }
+      // main moves on once more, on the very line the builder merged: a tree merge against the start would re-apply and conflict
+      commitFile(box.project, 'shared.txt', 'main final\n', 'main edit final');
+      box.setState(b.id, 'done');
+      await box.swarm.poll();
+      await until(() => log(box.project).includes('AIB: subagent builder M') || notes(main).some((n) => n.includes("couldn't land")), 'landed', 15);
+      assert(log(box.project).includes('AIB: subagent builder M'), notes(main).join('\n'));
+      assertEquals(woke.length, 0, 'no failed landing');
+      const names = runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter((n) => n).sort();
+      assertEquals(names, Array.from({ length: merges + 1 }, (_, i) => `own${i + 1}.txt`).sort());
+      assertEquals(read(box.project, 'shared.txt'), 'main final\n');
+      assertEquals(read(box.project, 'mine.txt'), 'folder unsaved work\n');
+      assertEquals(runGit(box.project, 'ls-tree', '--name-only', 'main').split('\n').includes('mine.txt'), false);
+    },
+  });
+}
+
+Deno.test({
+  ...T,
+  name: 'a builder that merged main and then truly conflicts leaves a landable branch of only its own change, on the main it merged',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    commitFile(box.project, 'c.txt', 'base\n', 'main adds c');
+    write(box.project, 'mine.txt', 'folder unsaved work\n');
+    const b = box.subagent(main.id, '', '', 'running', { seed: true, description: 'builder C' });
+    commitFile(b.path, 'c.txt', 'sub change\n', 'builder edits c');
+    commitFile(b.path, 'own1.txt', 'own one\n', 'builder one');
+    commitFile(box.project, 'shared.txt', 'main work\n', 'main work A');
+    commitFile(box.project, 'shared2.txt', 'main work 2\n', 'main work B');
+    runGit(b.path, 'merge', '-q', '--no-edit', 'main');
+    const merged = runGit(box.project, 'rev-parse', 'main').trim();
+    commitFile(box.project, 'c.txt', 'main change\n', 'main edits c'); // the real conflict
+    box.setState(b.id, 'done');
+    await box.swarm.poll();
+    await until(() => notes(main).some((n) => n.includes("couldn't land")), 'conflict told', 15);
+    const landable = 'studio/sub-test1-landable';
+    assertEquals(runGit(box.project, 'rev-parse', `${landable}^`).trim(), merged, 'on the main the builder merged');
+    const names = runGit(box.project, 'diff', '--name-only', `${landable}^`, landable).split('\n').filter((n) => n).sort();
+    assertEquals(names, ['c.txt', 'own1.txt'], 'only its own changes: not main\'s files, not the snapshot\'s');
+    assertEquals(runGit(box.project, 'show', `${landable}:c.txt`), 'sub change\n');
+    assertEquals(runGit(box.project, 'show', 'main:c.txt'), 'main change\n', 'nothing landed');
+  },
+});
+
 Deno.test({
   ...T,
   name: "a snapshot never lands the main folder's uncommitted files (untracked or edited) nor aib-shared content",

@@ -106,6 +106,44 @@ Deno.test({ name: 'wsl helper subagent.*: a conflict keeps the work, leaves a cl
   assertEquals(runGit(box.project, 'branch', '--list', 'studio/sub-*').trim(), '');
 } });
 
+Deno.test({ name: 'wsl helper subagent.*: a builder that merged main mid-work lands only its own commits; a real conflict leaves a landable branch of its own change only', ...T, async fn() {
+  using box = sandbox();
+  const h = subagentMethods(box.state);
+  write(box.project, 'mine.txt', 'my own unsaved work\n');
+  const only = (dir: string, file: string, body: string, subject: string) => {
+    write(dir, file, body);
+    runGit(dir, 'add', '--', file);
+    runGit(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', subject);
+  };
+  // lands cleanly although main moved on after the merge, on the very line it merged
+  const clean = await subagentAt(box, h, (p) => {
+    only(p, 'own1.txt', 'own\n', 'builder one');
+    only(box.project, 'shared.txt', 'main v1\n', 'main one');
+    runGit(p, 'merge', '-q', '--no-edit', 'main');
+    only(p, 'own2.txt', 'own two\n', 'builder two');
+    only(box.project, 'shared.txt', 'main v2\n', 'main two');
+  });
+  const landed = (await h['subagent.land']({ id: clean.id, parent: CHAT, target: 'main', title: 'T', held: [], states: {} }) as { outcome: Json }).outcome;
+  assertEquals(landed.state, 'merged', JSON.stringify(landed));
+  assertEquals(runGit(box.project, 'show', '--name-only', '--format=', 'main').split('\n').filter((n) => n).sort(), ['own1.txt', 'own2.txt']);
+  assertEquals(runGit(box.project, 'show', 'main:shared.txt'), 'main v2\n');
+  // a real conflict after a merge of main: the landable branch is on the merged main and holds only the builder's change
+  only(box.project, 'c.txt', 'base\n', 'main adds c');
+  const id2 = 'bbbbbbbb0123456789abcdef01234567';
+  let merged = '';
+  const rec = await subagentAt(box, h, (p) => {
+    only(p, 'c.txt', 'sub change\n', 'builder edits c');
+    only(box.project, 'other.txt', 'main work\n', 'main other');
+    runGit(p, 'merge', '-q', '--no-edit', 'main');
+    merged = runGit(box.project, 'rev-parse', 'main').trim();
+    only(box.project, 'c.txt', 'main change\n', 'main edits c');
+  }, id2);
+  const out = (await h['subagent.land']({ id: rec.id, parent: id2, target: 'main', title: 'T', held: [], states: {} }) as { outcome: Json }).outcome;
+  assertEquals(out.state, 'conflicts', JSON.stringify(out));
+  assertEquals(runGit(box.project, 'rev-parse', `${out.landable}^`).trim(), merged);
+  assertEquals(runGit(box.project, 'diff', '--name-only', `${out.landable}^`, String(out.landable)).split('\n').filter((n) => n), ['c.txt']);
+} });
+
 Deno.test({ name: 'wsl helper subagent.*: a file the folder has uncommitted is never overwritten (touched dirty), protected files and unknown ids are refused', ...T, async fn() {
   using box = sandbox();
   const h = subagentMethods(box.state);

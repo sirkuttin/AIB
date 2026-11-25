@@ -249,7 +249,7 @@ export async function landSubagentWork(
     // the main agent merges it by hand: the builder's own branch starts with a snapshot of the folder's uncommitted files, so a
     // clean branch of only its own changes is made for that
     const landable = spec.branch
-      ? await merge.landableBranch({ project: folder, worktree: path, start, head, branch: spec.branch }, spec.title).catch(() => '')
+      ? await merge.landableBranch({ project: folder, worktree: path, start, head, branch: spec.branch, tip: await merge.rev(folder, `refs/heads/${target}`) }, spec.title).catch(() => '')
       : '';
     return { state: 'conflicts', files: result.files, target, landable };
   }
