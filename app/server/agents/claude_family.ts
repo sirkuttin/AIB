@@ -34,6 +34,11 @@ export function isCodexFamily(value: unknown): boolean {
   return value === 'codex' || (isModelServerId(value) && baseAgent(value) === 'codex');
 }
 
+/** True for `qwen` and for every `qwen@<server id>` entry. */
+export function isQwenFamily(value: unknown): boolean {
+  return value === 'qwen' || (isModelServerId(value) && baseAgent(value) === 'qwen');
+}
+
 /** What AIB's per-agent tables (limits, titles, steer copy, transcripts) know an entry as: its base agent (`claude`, `codex`, ...). */
 export function claudeBase(value: string): string {
   return baseAgent(value);

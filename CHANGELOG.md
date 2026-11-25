@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Qwen Code subagents that edit files work in their own git worktree, as Claude Code's do, on Windows and in WSL projects. AIB lands them when each one finishes. The read-only Explore subagent runs in the project folder with read tools only (no shell). Forks and nested subagents are off. If hooks are off in your Qwen settings, or AIB can't give Qwen its hooks, the agent tool is off for that chat and the chat says so. AIB's settings for it live in AIB's own folder, never in ~/.qwen.
+
 ## 0.15.0 beta (2026-11-24)
 
 - AIB's 30 tools are 6: publish, artifacts, doc, drawing, helper and merge_into_project, each with a short description. Old names still work. Approvals work per action (a doc read runs automatically, a restore asks) and existing rules map over.

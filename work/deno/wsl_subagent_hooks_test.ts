@@ -521,3 +521,106 @@ Deno.test({
     assertEquals((await bashOf(hook, null, 'npm run dev')).body, '{}');
   },
 });
+
+const QWEN_DETECT = { agents: [{ id: 'qwen', found: true, command: ['node', '/usr/lib/node_modules/@qwen-code/qwen-code/cli.js', '--acp', '--experimental-skills'], version: '0.27.2' }] };
+
+Deno.test({
+  name: "wsl subagent hooks: a WSL Qwen chat gets AIB's system settings file in the distro (hooks on the helper socket) and its subagent works in a worktree there",
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab();
+    lab.host.handlers['agents.detect'] = () => QWEN_DETECT;
+    const { c, env, hook } = await openChat(lab, 'qwen');
+    assertEquals(c.subagentHooks!.off, '');
+    assert(c.subagentHooks!.adopted === true);
+    assertEquals(c.subagentHooks!.readOnly, ['Explore']);
+    // the settings file is written in the distro by its helper, named by QWEN_CODE_SYSTEM_SETTINGS_PATH
+    const file = env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+    assertEquals(file, `/home/u/aibdata/qwen/${c.id}/settings.json`);
+    const settings = JSON.parse(Deno.readTextFileSync(lab.win(file))) as { hooks: Record<string, { hooks: { command: string }[] }[]>; permissions: { deny: string[] } };
+    assertEquals(settings.hooks.PreToolUse.at(-1)!.hooks[0].command, `'${KEEPER}' hook qwen-pre-tool --helper-socket '${SOCKET}' || exit 2`);
+    assertEquals(settings.hooks.SubagentStop[0].hooks[0].command, `'${KEEPER}' hook qwen-subagent-stop --helper-socket '${SOCKET}' || exit 2`);
+    assert(settings.permissions.deny.includes('Agent(claude-code)') && !settings.permissions.deny.includes('agent'));
+    assertEquals(env.AIB_HOOK_CHAT, c.id);
+    assertEquals(env.AIB_HOOK_READONLY, 'Explore');
+    assert(!Deno.readTextFileSync(lab.win(file)).includes(env.AIB_HOOK_KEY), 'no key in the file');
+    // an agent call: the worktree is made in the distro and set as working_dir
+    const input = { description: 'write the docs', prompt: 'do it', subagent_type: 'general-purpose' };
+    const pre = await hook('qwen-pre-tool', { tool_name: 'agent', tool_call_id: 'call_1', tool_input: input });
+    assertEquals([pre.tunnel, pre.status, pre.proofOk], [200, 200, true]);
+    const rec = mirrors(lab)[0];
+    assertEquals([rec.state, rec.description], ['prepared', 'write the docs']);
+    const fwd = (p: string) => p.replaceAll(SEP, '/');
+    const out = JSON.parse(pre.body).hookSpecificOutput;
+    assertEquals([out.permissionDecision, out.updatedInput.working_dir], ['allow', fwd(lab.win(rec.wsl!.linux.path))]);
+    assertEquals({ ...out.updatedInput, working_dir: '' }, { ...input, working_dir: '' });
+    // start binds ITS call; edits only inside the worktree, the main folder is refused
+    const start = await hook('qwen-subagent-start', { agent_id: 'general-purpose-call_1', agent_type: 'general-purpose' });
+    assertEquals([start.status, start.proofOk], [200, true]);
+    assert(JSON.parse(start.body).hookSpecificOutput.additionalContext.includes(lab.win(rec.wsl!.linux.path)), start.body);
+    const wt = lab.win(rec.wsl!.linux.path);
+    const inside = await hook('qwen-pre-tool', { tool_name: 'write_file', agent_id: 'general-purpose-call_1', tool_input: { file_path: `${wt}${SEP}a.txt` } });
+    assertEquals([inside.status, inside.body], [200, '{}']);
+    const outside = await hook('qwen-pre-tool', { tool_name: 'write_file', agent_id: 'general-purpose-call_1', tool_input: { file_path: `${lab.work}${SEP}a.txt` } });
+    assertEquals(JSON.parse(outside.body).hookSpecificOutput.permissionDecision, 'deny');
+    const shell = await hook('qwen-pre-tool', { tool_name: 'run_shell_command', agent_id: 'general-purpose-call_1', tool_input: { command: `echo hi > ${fwd(lab.work)}/a.txt` } });
+    assertEquals(JSON.parse(shell.body).hookSpecificOutput.permissionDecision, 'deny');
+    // Explore: no worktree, reads only
+    const explore = await hook('qwen-pre-tool', { tool_name: 'run_shell_command', agent_id: 'Explore-call_2', tool_input: { command: 'ls' } });
+    assertEquals(JSON.parse(explore.body).hookSpecificOutput.permissionDecision, 'deny');
+    assertEquals((await hook('qwen-pre-tool', { tool_name: 'read_file', agent_id: 'Explore-call_2', tool_input: {} })).body, '{}');
+    // a fork is refused; a Codex event does not answer a Qwen chat
+    const fork = await hook('qwen-pre-tool', { tool_name: 'agent', tool_call_id: 'call_3', tool_input: { subagent_type: 'fork', prompt: 'x' } });
+    assertEquals(JSON.parse(fork.body).hookSpecificOutput.permissionDecision, 'deny');
+    assertEquals((await hook('codex-pre-tool', { tool_name: 'spawn_agent', tool_use_id: 'call_4', tool_input: { message: 'x' } })).status, 503);
+    assertEquals((await hook('qwen-subagent-stop', { agent_id: 'general-purpose-call_1' })).status, 200);
+    assertEquals(mirrors(lab)[0].state, 'done');
+    assertEquals(runGit(lab.work, 'status', '--porcelain').trim(), '');
+  },
+});
+
+Deno.test({
+  name: "wsl subagent hooks: a WSL Qwen chat whose hooks can't be given turns its agent tool off (the file with `agent` denied); no setup at all says so",
+  ...T,
+  async fn() {
+    await keeperBinary();
+    // 1. hooks turned off in the user's own Qwen settings (read in the distro)
+    {
+      await using lab = new Lab();
+      lab.host.handlers['agents.detect'] = () => QWEN_DETECT;
+      const qwen = lab.dir + SEP + 'qwen-home';
+      write(qwen, 'settings.json', JSON.stringify({ disableAllHooks: true }));
+      const base = lab.helper['subagent.setup'];
+      lab.host.handlers['subagent.setup'] = async (p) => lab.out(await base({ ...(lab.into(p) as Json), env: { QWEN_HOME: qwen } }));
+      const { c, env } = await openChat(lab, 'qwen');
+      assertEquals(c.subagentHooks!.off, 'hooks are off');
+      assert(c.subagentHooks!.detail!.includes('disableAllHooks'), c.subagentHooks!.detail);
+      assert(!c.subagentIsolationOn());
+      const settings = JSON.parse(Deno.readTextFileSync(lab.win(env.QWEN_CODE_SYSTEM_SETTINGS_PATH))) as { hooks?: unknown; permissions: { deny: string[] } };
+      assert(settings.permissions.deny.includes('agent'));
+      assertEquals(settings.hooks, undefined);
+      assert(notes(c).some((n) => n.startsWith('Subagents are off in this Qwen chat') && n.includes('disableAllHooks')), notes(c).join('\n'));
+      assertEquals(env.AIB_HOOK_KEY, undefined, 'no key when no hook runs');
+    }
+    // 2. a helper without the hook tunnel, or one that cannot be asked: said up front (this build cannot deny the tool there)
+    {
+      await using lab = new Lab(true);
+      lab.host.handlers['agents.detect'] = () => QWEN_DETECT;
+      lab.host.hookTunnel = null;
+      const { c } = await openChat(lab, 'qwen');
+      assertEquals(c.subagentHooks!.off, 'WSL hooks unavailable');
+      assert(notes(c).some((n) => n.includes("Subagents can't get their own worktree in this chat")), notes(c).join('\n'));
+    }
+    {
+      await using lab = new Lab();
+      lab.host.handlers['agents.detect'] = () => QWEN_DETECT;
+      lab.host.handlers['subagent.setup'] = () => {
+        throw new WslHelperError('the distro stopped', 'stopped');
+      };
+      const { c } = await openChat(lab, 'qwen');
+      assertEquals(c.subagentHooks!.off, 'WSL hooks unavailable');
+      assert(c.subagentHooks!.detail!.includes('the distro stopped'));
+    }
+  },
+});

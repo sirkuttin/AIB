@@ -289,8 +289,19 @@ export interface HelperMethods {
    * (claudeTool, acpEnded, reconcileEnded, turnEnded, turnCancelled); `subagent.folderBranch` is the branch a record lands on.
    */
   'subagent.setup': {
-    params: { agent: 'claude' | 'codex'; project: string; folder?: string; aibWorktree?: boolean; env?: Record<string, string>; chatId?: string };
+    params: {
+      agent: 'claude' | 'codex' | 'qwen';
+      project: string;
+      folder?: string;
+      aibWorktree?: boolean;
+      env?: Record<string, string>;
+      chatId?: string;
+      /** A Qwen chat: what AIB adds to Qwen's system settings with hooks on / off (subagents/qwen.ts QwenFragment); the helper merges it into the distro's own and writes the file. */
+      qwen?: { on: { hooks: Record<string, unknown> | null; deny: string[] }; off: { hooks: Record<string, unknown> | null; deny: string[] } };
+    };
     result: {
+      /** A Qwen chat's settings file in the distro (QWEN_CODE_SYSTEM_SETTINGS_PATH), '' when none was written. */
+      settingsFile: string;
       /** A Codex chat's own folder for its subagents' worktrees (made by the helper), '' otherwise. */
       subFolder: string;
       git: string;

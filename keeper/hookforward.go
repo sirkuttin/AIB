@@ -78,11 +78,12 @@ const (
 var hookEvents = map[string]bool{"pre-tool": true, "worktree-create": true, "post-agent": true, "subagent-stop": true,
 	"codex-pre-tool": true, "codex-subagent-start": true, "codex-subagent-stop": true, // codex-*: hookforward_codex.go
 	"gemini-before-tool": true, // Gemini CLI's BeforeTool (hookgemini.go)
-	"pre-shell":          true} // hook 2: a subagent's Bash/PowerShell call, never blocking (hookshell.go)
+	"qwen-pre-tool":      true, "qwen-subagent-start": true, "qwen-subagent-stop": true, // qwen-*: hookforward_qwen.go
+	"pre-shell": true} // hook 2: a subagent's Bash/PowerShell call, never blocking (hookshell.go)
 
 // blocking: the events whose failure must block the call (exit 2).
 func hookBlocking(event string) bool {
-	return event == "pre-tool" || event == "worktree-create" || event == "codex-pre-tool"
+	return event == "pre-tool" || event == "worktree-create" || event == "codex-pre-tool" || event == "qwen-pre-tool"
 }
 
 // errAIBGone: the address file names a process that no longer runs (AIB crashed; its port may be anyone's now).
@@ -90,8 +91,8 @@ var errAIBGone = errors.New("the AIB named in the address file is not running")
 
 func hookMain(args []string) int {
 	if len(args) == 1 && args[0] == "--check" {
-		// hook 3 adds the local kill-by-name refusal (hookkill.go); hook 2 (no-stuck-processes) added the non-blocking pre-shell event; everything hook 1 does is unchanged, so AIB runs both.
-		fmt.Println(checkLine("hook 3"))
+		// hook 4 adds the qwen-* events (hookforward_qwen.go); hook 3 added the local kill-by-name refusal (hookkill.go); hook 2 (no-stuck-processes) added the non-blocking pre-shell event; everything hook 1 does is unchanged, so AIB runs both.
+		fmt.Println(checkLine("hook 4"))
 		return 0
 	}
 	socket := ""
@@ -101,7 +102,7 @@ func hookMain(args []string) int {
 		args = []string{args[0], socket}
 	}
 	if len(args) != 2 || !hookEvents[args[0]] || args[1] == "" {
-		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|pre-shell|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool <address file> | hook <event> --helper-socket <unix socket>")
+		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|pre-shell|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool|qwen-pre-tool|qwen-subagent-start|qwen-subagent-stop <address file> | hook <event> --helper-socket <unix socket>")
 		return 2
 	}
 	deadline := hookDeadline
@@ -148,6 +149,10 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 			return 0
 		}
 		fmt.Fprintln(stderr, message)
+		if h.event == "qwen-pre-tool" {
+			stdout.Write(codexDeny(message)) // the same PreToolUse deny object; Qwen reads it whatever the exit code
+			return 0
+		}
 		if h.event == "codex-pre-tool" {
 			// Codex 0.166 runs a PreToolUse call whose hook exits 2 (work/cx_codex_subagent_probe.py spawn-exit2: the subagent's
 			// command ran in the main folder); it honours a JSON deny. So Codex is refused with one, exit 0.
@@ -165,6 +170,15 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 		if why := killRefusal(input, h.event == "pre-shell"); why != "" {
 			stdout.Write(codexDeny(why)) // the same PreToolUse deny object for Claude and Codex
 			return 0
+		}
+	}
+	if h.event == "qwen-pre-tool" {
+		if why := geminiKillRefusal(input); why != "" { // Qwen's run_shell_command has Gemini's shape (tool_input.command)
+			stdout.Write(codexDeny(why))
+			return 0
+		}
+		if h.qwenPassesLocally(input) {
+			return 0 // the main agent's own call (not agent): nothing to ask AIB
 		}
 	}
 	if h.event == "gemini-before-tool" {
@@ -205,6 +219,9 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(h.event, "codex-") {
 		return h.codexAnswer(input, status, body, stdout, stderr)
+	}
+	if strings.HasPrefix(h.event, "qwen-") {
+		return h.qwenAnswer(input, status, body, stdout, stderr)
 	}
 	if h.event == "gemini-before-tool" {
 		if status != http.StatusOK {
@@ -456,6 +473,9 @@ func (h *hookForwarder) endpoint() (string, error) {
 	u.Path = "/hooks/claude/" + h.event
 	if rest, ok := strings.CutPrefix(h.event, "codex-"); ok {
 		u.Path = "/hooks/codex/" + rest
+	}
+	if rest, ok := strings.CutPrefix(h.event, "qwen-"); ok {
+		u.Path = "/hooks/qwen/" + rest
 	}
 	if h.event == "gemini-before-tool" {
 		u.Path = "/hooks/gemini/before-tool"

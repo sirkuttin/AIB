@@ -802,7 +802,16 @@ export async function forwarderOf(binary: string | null, dataDir: string): Promi
  */
 export async function hookForwarderOf(binary: string | null, dataDir: string): Promise<string | null> {
   const program = binary ?? await keeperBinary(dataDir);
-  return /^hook [123]\b/.test(await checkLine(program, 'hook')) ? program : null; // hook 3 (kill-by-name refusal) and 2 do everything hook 1 does, and more
+  return /^hook [1234]\b/.test(await checkLine(program, 'hook')) ? program : null; // hook 4 (qwen-* events), 3 (kill-by-name refusal) and 2 do everything hook 1 does, and more
+}
+
+/**
+ * True when this forwarder (already asked by hookForwarderOf) knows hook 4: the qwen-pre-tool, qwen-subagent-start and
+ * qwen-subagent-stop events (keeper/hookforward_qwen.go). An older program refuses them, so a Qwen chat given one has its subagents
+ * turned off instead.
+ */
+export function hookForwarderKnowsQwen(program: string): boolean {
+  return hookForwarderVersion(program) >= 4;
 }
 
 /** The `hook` version a forwarder program answered (`hook <n>`): 0 when it was not asked, or answers nothing AIB knows. */
