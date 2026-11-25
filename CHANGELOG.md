@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.15.0 beta (2026-11-24)
+
+- AIB's 30 tools are 6: publish, artifacts, doc, drawing, helper and merge_into_project, each with a short description. Old names still work. Approvals work per action (a doc read runs automatically, a restore asks) and existing rules map over.
+- Codex sees AIB's tools directly and waits for them before its first turn. Gemini CLI gets them: AIB marks the project folder as trusted in its own trust file. Qwen Code's MCP tools reach the model. Maki's own tools run without approval. The Copilot card says AIB's tools are not available there.
+- Out-of-date chats restart themselves when idle (not mid-turn, no background processes) to pick up new tools, with one line in the chat. Lead chats keep their helper tools after an update.
+- Unlanded subagent or helper work goes to the main agent (helper actions work_list, work_land, work_diff, work_discard). The Changes tab shows at most "Being handled by <chat>"; the "Left over" list is gone. The landed check is reliable, landing waits for a builder's own processes, and a finished builder lands while others work. Landing messages appear in the chat only when action is needed.
+- Working status covers subagents, helpers and their background runs everywhere, including the project dropdown dot. Activity lists only running processes; finished helpers and subagents (and failed subagents with no changes) fold into "N finished" with grey dots. Clicking a helper opens its history, and open errors show in the panel. Background tool rows show the command, not an id.
+- AIB refuses kill-by-name commands in every chat and tells agents to kill by PID.
+- Big pasted pictures are shrunk instead of refused; the chip shows the new size.
+- The data folder is %LOCALAPPDATA%\AIB (Linux and macOS: aib / AIB), marked by aib-data.json. A one-time script, work/migrate/rename_data_folder.ts, moves an existing AgentStudio folder; AIB never moves it by itself.
+- The repo moved from outputs/agent-studio to app/, and docs are in docs/. The Python reference and the Python tests are retired.
+
 ## 0.14.0 beta (2026-11-23)
 
 - Model servers: Settings > Model servers adds a local model server (name, address, optional key, model). Each agent switched on under Use with (Claude Code, Codex, Maki, Qwen Code) gets its own New chat entry, such as "Claude Code · strata"; a server that does not answer is greyed out. Helpers can use these entries.

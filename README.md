@@ -37,7 +37,8 @@ AIB runs Claude Code, Codex and ten more agent providers (via ACP) side by side 
 
 **3. See everything every agent does.**
 - Tool calls with inputs and diffs, thinking, plans, approvals and questions appear in the chat.
-- The Activity column lists subagents and the processes each chat started, with running time.
+- The Activity column lists the subagents, helpers and processes that are running, with running time. Finished ones fold into "N finished".
+- Every agent gets the same six AIB tools (publish, artifacts, doc, drawing, helper, merge_into_project) for artifacts, docs, helpers and landing work. Approvals work per action. Agents that cannot use them, such as GitHub Copilot, say so on their card.
 - The Prompts view lists each prompt you sent with the work it caused. Saved Claude Code chats from outside AIB are
   listed too, marked "In use elsewhere" when another app has them open.
 

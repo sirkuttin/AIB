@@ -33,8 +33,12 @@ Chats, settings, artifacts, worktrees, logs and backups live in one folder:
 | System | Data folder |
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\AgentStudio` |
-| macOS | `~/Library/Application Support/AgentStudio` |
-| Linux | `~/.local/state/agent-studio` |
+| macOS | `~/Library/Application Support/AIB` |
+| Linux | `~/.local/state/aib` |
+
+The folder holds a marker file, `aib-data.json`. A PC that still has the older `AgentStudio` (Linux: `agent-studio`) folder keeps
+using it until you run the one-time script `deno run -A work/migrate/rename_data_folder.ts` from the repository. AIB never moves
+the folder by itself.
 
 Worktrees are never made inside your repository. Docs (`aib-docs/`) and the `aib-shared/` folder are in your project, where you
 and your agents can see them.

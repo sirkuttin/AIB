@@ -61,8 +61,13 @@ long it ran, and Failed or Stopped when it didn't finish normally.
 
 ## Activity tab: every helper and process each chat started
 
-The **Activity** tab in the right column lists the subagents and processes each chat started, with their run time, and how
-many subagents are working right now.
+The **Activity** tab in the right column lists the subagents, helpers and processes that are running, with their run time, and how
+many subagents are working right now. Finished helpers and subagents fold into "N finished" with grey dots, and so do failed
+subagents that changed nothing. Click a helper to open its history; if it cannot open, the error shows in the panel. Background
+tool rows show the command. The **Working** status, including the dot on the project dropdown, covers subagents, helpers and their
+background runs.
+
+AIB refuses kill-by-name commands such as `taskkill /im` and `pkill` in every chat and tells the agent to kill by PID.
 
 ## Helpers from other agents: start Codex, Gemini or a local model from any chat
 
