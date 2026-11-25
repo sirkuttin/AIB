@@ -62,11 +62,21 @@ export async function httpJson(
   return [response.status, text ? JSON.parse(text) : {}];
 }
 
+/** Reject with `what` after `ms` unless `work` settled first: a promise that never settles (a socket that went quiet) cannot hang a test. */
+export function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timed out waiting for ${what}`)), Math.max(1, ms));
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
 export async function until<T>(condition: () => T | Promise<T>, what = 'condition', seconds = 20): Promise<NonNullable<T>> {
   const deadline = Date.now() + seconds * 1000;
   while (Date.now() < deadline) {
     try {
-      const value = await condition();
+      // One call that never settles must not outlive the deadline: it counts as "not yet" and ends in the timeout below.
+      const value = await within(Promise.resolve().then(condition), deadline - Date.now(), what);
       if (value) return value as NonNullable<T>;
     } catch { /* not yet */ }
     await sleep(100);

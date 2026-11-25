@@ -12,6 +12,7 @@
  */
 import { createHash } from 'node:crypto';
 import { REPO_ROOT } from '../../app/server/core/app.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 /** The newer version the update tests build as "B". One string for all of them, so they share that build too. */
 export const NEXT_VERSION = '0.1.0-beta.99';
@@ -60,6 +61,13 @@ async function build(out: string, version: string): Promise<void> {
   if (!r.success) throw new Error(`build failed: ${new TextDecoder().decode(r.stderr)}`);
 }
 
+/** Is the process named in the lock file still there? A lock with no readable PID (written just now, or by an older run) counts as alive. */
+function lockOwnerAlive(lock: string): boolean {
+  const pid = Number(Deno.readTextFileSync(lock).trim());
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  return pidAlive(pid);
+}
+
 function prune(): void {
   try {
     const dirs = [...Deno.readDirSync(CACHE)].filter((e) => e.isDirectory && /^[0-9a-f]{24}$/.test(e.name))
@@ -83,14 +91,20 @@ export async function builtDist(version = ''): Promise<string> {
   while (!exists(dir)) {
     let mine = false;
     try {
-      Deno.openSync(lock, { createNew: true, write: true }).close();
+      const file = Deno.openSync(lock, { createNew: true, write: true });
+      file.writeSync(new TextEncoder().encode(String(Deno.pid))); // who builds: a waiter can tell a dead run from a slow one
+      file.close();
       mine = true;
     } catch {
-      const age = Date.now() - (Deno.statSync(lock).mtime?.getTime() ?? 0);
-      if (age > LOCK_STALE_MS) {
-        Deno.removeSync(lock); // a run that died while building
-        continue;
-      }
+      try {
+        const age = Date.now() - (Deno.statSync(lock).mtime?.getTime() ?? 0);
+        // A run that was killed mid-build (its finally never ran) leaves the lock behind: the owner's PID says so at once, instead
+        // of every later run waiting out the 20 minutes (the 2026-11-23 hang: no child process, ~1 s CPU, sleeping here).
+        if (age > LOCK_STALE_MS || !lockOwnerAlive(lock)) {
+          Deno.removeSync(lock);
+          continue;
+        }
+      } catch { /* the lock went away: take it on the next round */ }
     }
     if (mine) {
       const tmp = `${dir}.tmp-${Deno.pid}`;

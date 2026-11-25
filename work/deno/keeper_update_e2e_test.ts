@@ -23,7 +23,7 @@
  *      leaves no process behind: no AIB, no keeper, no agent, no forwarder.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { Fixture, httpJson, nativePath, PAGE_KEY, until } from './_host_fixture.ts';
+import { Fixture, httpJson, nativePath, PAGE_KEY, until, within } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { WORK } from './_work.ts';
 import { pidAlive, readInfo } from '../../app/server/host/host_client.ts';
@@ -37,6 +37,7 @@ const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '
 let PORT = 0;
 const NEXT = NEXT_VERSION; // one B for every update test: one cached build
 const CHUNKS = 40;
+const WATCHDOG_MIN = 15;
 type Json = Record<string, unknown>;
 const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.mjs', WORK));
 const DEC = new TextDecoder();
@@ -45,10 +46,15 @@ const DEC = new TextDecoder();
 let cdpRoot = '';
 
 /** Run `expression` in AIB's page (the window's WebView2, through its DevTools port). */
-async function cdpEval(expression: string): Promise<unknown> {
+function cdpEval(expression: string): Promise<unknown> {
+  // Every step waits on WebView2 (HTTP, then a socket that may open and never answer, or close without a reply): bounded as a whole.
+  return within(cdpEvalUnbounded(expression), 10_000, 'the page (WebView2 DevTools) to answer');
+}
+
+async function cdpEvalUnbounded(expression: string): Promise<unknown> {
   const cdp = devToolsPortNow(cdpRoot);
   if (!cdp) throw new Error('no DevToolsActivePort yet');
-  const targets = await (await fetch(`http://127.0.0.1:${cdp}/json/list`)).json() as Json[];
+  const targets = await (await fetch(`http://127.0.0.1:${cdp}/json/list`, { signal: AbortSignal.timeout(5000) })).json() as Json[];
   const page = targets.find((t) => t.type === 'page' && String(t.url).startsWith(`http://127.0.0.1:${PORT}`));
   if (!page) throw new Error('no page target yet');
   const ws = new WebSocket(String(page.webSocketDebuggerUrl));
@@ -57,7 +63,10 @@ async function cdpEval(expression: string): Promise<unknown> {
     ws.onerror = reject;
   });
   try {
-    const answer = new Promise<Json>((resolve) => (ws.onmessage = (e) => resolve(JSON.parse(e.data))));
+    const answer = new Promise<Json>((resolve, reject) => {
+      ws.onmessage = (e) => resolve(JSON.parse(e.data));
+      ws.onclose = () => reject(new Error('DevTools socket closed without an answer'));
+    });
     ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }));
     const reply = await answer;
     return ((reply.result as Json)?.result as Json)?.value;
@@ -72,7 +81,14 @@ async function processesUnder(folder: string): Promise<[number, string][]> {
   const script = `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${
     folder.replaceAll("'", "''")
   }', 'OrdinalIgnoreCase') } | ForEach-Object { "$($_.ProcessId)|$($_.ExecutablePath)" }`;
-  const r = await new Deno.Command('powershell', { args: ['-NoProfile', '-NonInteractive', '-Command', script], stdout: 'piped' }).output();
+  const child = new Deno.Command('powershell', { args: ['-NoProfile', '-NonInteractive', '-Command', script], stdout: 'piped' }).spawn();
+  const killer = setTimeout(() => {
+    try {
+      child.kill('SIGKILL'); // our own child only
+    } catch { /* gone */ }
+  }, 30_000);
+  const r = await child.output().finally(() => clearTimeout(killer));
+  if (!r.success) throw new Error('process listing (powershell) failed or took over 30 s');
   return DEC.decode(r.stdout).split(/\r?\n/).filter(Boolean).map((l) => {
     const [pid, path] = l.split('|');
     return [Number(pid), path];
@@ -130,9 +146,14 @@ function said(state: Json): string {
   }).join('');
 }
 
+/** A client of the keeper in `state`, bounded: a keeper that accepts and never answers fails the test instead of hanging it. */
+function keeperConnect(state: string): Promise<KeeperClient> {
+  return within(KeeperClient.connect(readKeeperInfo(state)!, 'keeper e2e test'), 15_000, 'the keeper to answer a new client');
+}
+
 /** The keeper's whole record of one channel, read through a client of our own (attaching never claims). */
 async function journal(state: string, channel: string): Promise<KeeperRecord[]> {
-  const client = await KeeperClient.connect(readKeeperInfo(state)!, 'keeper e2e test');
+  const client = await keeperConnect(state);
   const records: KeeperRecord[] = [];
   let live = false;
   try {
@@ -194,6 +215,19 @@ Deno.test({
     Deno.writeTextFileSync(`${fx.state}\\desktop-port.json`, JSON.stringify({ port: PORT }));
     const pids = new Set<number>();
     let keeperPid = 0;
+    // Backstop: the whole test (after the builds) must end in WATCHDOG_MIN minutes. Past that, something waits on a promise that never
+    // settles; stop the processes this test started and end the run with a message instead of sitting there for hours.
+    const watchdog = setTimeout(() => {
+      console.error(`keeper_update_e2e: HUNG, still running ${WATCHDOG_MIN} minutes after the builds; killing the processes it started and exiting`);
+      for (const pid of [...pids, keeperPid]) {
+        if (pid) {
+          try {
+            Deno.kill(pid, 'SIGKILL');
+          } catch { /* gone */ }
+        }
+      }
+      setTimeout(() => Deno.exit(1), 3000);
+    }, WATCHDOG_MIN * 60_000);
     try {
       for (const [k, v] of Object.entries(env)) Deno.env.set(k, v);
       const flags = fx.agentFlags().filter((_, i, a) => a[i] !== '--state-dir' && a[i - 1] !== '--state-dir');
@@ -237,8 +271,8 @@ Deno.test({
         /\\keeper-bin\\[0-9a-f]{16}\\AIB-keeper\.exe$/i.test(keeperExe),
         `the keeper runs from the data folder, not the app folder: ${keeperExe}`,
       );
-      const watcher = await KeeperClient.connect(keeperInfo, 'keeper e2e test');
-      const agentPid = (await watcher.list()).find((c) => c.channel === channel)!.pid;
+      const watcher = await keeperConnect(fx.state);
+      const agentPid = (await within(watcher.list(), 15_000, 'the keeper to list its chats')).find((c) => c.channel === channel)!.pid;
       watcher.close();
       pids.add(agentPid);
       assertEquals((await post(tokenA, 'prompt', { id: cid, text: `stream:${CHUNKS}:150`, clientMessageId: 'k2-e2e' }))[0], 200);
@@ -301,8 +335,8 @@ Deno.test({
       const sent = sentLines(await journal(fx.state, channel));
       assertEquals(sent.filter((m) => m.method === 'session/prompt').length, 1);
       assertEquals(sent.filter((m) => m.id === 'stream-ask' && !m.method).length, 1);
-      const now = await KeeperClient.connect(readKeeperInfo(fx.state)!, 'keeper e2e test');
-      const after = (await now.list()).find((c) => c.channel === channel)!;
+      const now = await keeperConnect(fx.state);
+      const after = (await within(now.list(), 15_000, 'the keeper to list its chats')).find((c) => c.channel === channel)!;
       now.close();
       assertEquals([after.live, after.pid], [true, agentPid], 'the same agent process');
       assertEquals(readKeeperInfo(fx.state)!.pid, keeperPid, 'the same keeper process, kept running across the update');
@@ -403,6 +437,7 @@ Deno.test({
       await until(() => !pidAlive(keeperPid), 'the keeper exited (no channel, no client)', 30);
       assertEquals(await processesUnder(fx.state), [], 'nothing runs from the data folder');
     } finally {
+      clearTimeout(watchdog);
       for (const [k] of Object.entries(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
       // The keeper first: with a live chat and no client it would start AIB again (its orphan command).
       if (keeperPid && pidAlive(keeperPid)) {
