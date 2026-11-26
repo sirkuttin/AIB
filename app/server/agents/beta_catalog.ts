@@ -196,7 +196,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     // UNCONFIRMED: "the Free plan works". GitHub's install page (docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/
     // install-copilot-cli, read 2026-11-11) only says "An active GitHub Copilot subscription" and does not name the plans.
     cost: 'Needs a GitHub Copilot plan (the Free plan works)',
-    note: "AIB's own tools (artifacts, docs, helper agents) are not available in Copilot chats: Copilot CLI ignores the tool servers a client gives it.",
+    note: "AIB's own tools (artifacts, docs, drawings, helper agents) are available in Copilot chats. Copilot's own subagents stay off; the main agent can start AIB helpers (Claude, Codex or Gemini) for parallel work.",
     // registry: npx @github/copilot@1.0.109 --acp. Node 22+ (research). Also `winget install GitHub.Copilot` (a native copilot.exe).
     npm: { package: '@github/copilot', version: '1.0.109', bin: 'copilot', entry: 'index.js' },
     commands: ['copilot'],

@@ -20,6 +20,7 @@ const FLAGS = {
   'acp-models': 'bool', 'claude-modes': 'bool', 'codex-modes': ['v2.6', 'old', 'neither'], 'fixture-login': 'bool',
   'prompt-auth': 'bool', 'fail-login': 'bool', 'terminal-env': 'bool', 'held-turn': 'bool', 'not-claude': 'bool', 'child-pid-file': 'str',
   'limits': 'bool', 'extra-dirs': 'bool', 'steer': ['claude', 'codex', 'omp', 'other'],
+  'additional-mcp-config': 'str', // Copilot's launch flag (agents/copilot_mcp.ts): accepted and ignored
 };
 
 function parseArgs(argv, prog) {

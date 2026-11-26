@@ -71,7 +71,17 @@ export const nativeOffPrompt = (agent: NativeOffAgent): string =>
   `In this chat, subagents are turned off (the ${TOOLS[agent]} tool is not available), because AIB can't give a ${
     NAMES[agent]
   } subagent its ` +
-  'own git worktree. Do the work yourself, in this chat.';
+  'own git worktree. Do the work yourself, in this chat.' +
+  (agent === 'copilot' ? ' ' + COPILOT_TOOLS_PROMPT : '');
+
+/**
+ * Copilot (agents/copilot_mcp.ts): AIB's tools reach it through its own MCP config file, and Copilot names each `<server>-<tool>`.
+ * Its subagents stay off; parallel work goes to AIB helpers (Claude, Codex or Gemini), which AIB gives their own worktree.
+ */
+export const COPILOT_TOOLS_PROMPT = "AIB's own tools are available in this chat, named studio_artifact-<tool> (studio_artifact-publish, " +
+  'studio_artifact-doc, studio_artifact-drawing, studio_artifact-artifacts, studio_artifact-helper, studio_artifact-merge_into_project); ' +
+  'where this chat says the doc tool is mcp__studio_artifact__doc, use studio_artifact-doc. For work in parallel, start an AIB helper ' +
+  'with the studio_artifact-helper tool if you have it (helpers are Claude, Codex or Gemini agents with their own worktree).';
 
 /** The line in front of the next prompt of a chat AIB could not turn subagents off in: asked for, not enforced. */
 export const nativeAskedPrompt = (agent: NativeOffAgent): string =>
@@ -81,7 +91,8 @@ export const nativeAskedPrompt = (agent: NativeOffAgent): string =>
 /** The chat line of a new chat whose subagents are off. */
 export const nativeOffNote = (agent: NativeOffAgent): string =>
   `${NAMES[agent]}'s subagents are off in this chat: ${NAMES[agent]} can't give a subagent its own git worktree, so AIB removed its ` +
-  `${agent === 'copilot' ? 'task and workflow tools' : 'task tool'} and the agent does that work itself.`;
+  `${agent === 'copilot' ? 'task and workflow tools' : 'task tool'} and the agent does that work itself.` +
+  (agent === 'copilot' ? " AIB's own tools are available, and the main agent can start AIB helpers (Claude, Codex or Gemini) for parallel work." : '');
 
 /** The chat line when the flag could not be added: why, and what AIB does instead. */
 export const nativeAskedNote = (agent: NativeOffAgent, why: string): string =>

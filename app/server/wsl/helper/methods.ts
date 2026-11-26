@@ -474,6 +474,23 @@ function phaseOne(ctx: HelperContext): Handlers {
       return { path: dir };
     },
 
+    // A Copilot chat's MCP config (agents/copilot_mcp.ts): <AIB's folder>/copilot/<chat id>/mcp.json, never the user's ~/.copilot.
+    'mcpconfig.write': async (p) => {
+      const id = str(p, 'id');
+      const json = str(p, 'json');
+      if (!/^[0-9a-f]{32}$/.test(id)) throw new RpcError('id must be a chat id', BAD_PARAMS);
+      if (json.length > 100_000) throw new RpcError('json is too long', BAD_PARAMS);
+      const dir = osp.join((await ownFolders(ctx))[0], 'copilot', id);
+      Deno.mkdirSync(dir, { recursive: true });
+      const file = osp.join(dir, 'mcp.json');
+      let same = false;
+      try {
+        same = Deno.readTextFileSync(file) === json;
+      } catch { /* not written yet */ }
+      if (!same) Deno.writeTextFileSync(file, json);
+      return { path: file };
+    },
+
     // Gemini folder trust: AIB's own file (<AIB's folder>/gemini-trusted-folders.json), never the user's ~/.gemini/trustedFolders.json.
     // Only absolute folders the chat works in (its project folder and its AIB worktree copy).
     'geminitrust.write': async (p) => {

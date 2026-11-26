@@ -79,6 +79,7 @@ import * as gemini from '../subagents/gemini.ts';
 import * as agySub from '../subagents/antigravity.ts';
 import { isAntigravity } from '../subagents/antigravity.ts';
 import * as nativeOff from '../subagents/native_off.ts';
+import * as copilotMcp from '../agents/copilot_mcp.ts';
 import { ProcessReaper } from '../subagents/reap.ts';
 import { APP_VERSION, isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
@@ -1777,6 +1778,9 @@ export class Aib {
       // A Codex agent starts once the chat's MCP servers are known: they go in its CODEX_CONFIG (acp/codex_mcp.ts), read at its start
       const codexLate = !plan && isCodexFamily(provider);
       if (codexLate) connectionOptions.start = false;
+      // A Copilot agent too: its MCP config file (agents/copilot_mcp.ts) names the chat's servers, known once the connection exists
+      const copilotLate = !plan && baseAgent(provider) === 'copilot';
+      if (copilotLate) connectionOptions.start = false;
       connection = Object.keys(connectionOptions).length
         ? this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider, connectionOptions)
         : this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider);
@@ -1811,7 +1815,8 @@ export class Aib {
         const helper = c.swarm?.role === 'helper'; // a helper gets neither the merge tools (review break 3) nor the swarm tools
         c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree && !helper, forwarder, this.#isMain(c))];
       }
-      if (codexLate) c.startProcess();
+      if (baseAgent(provider) === 'copilot') toolsNotice = await this.#copilotTools(c, launchCommand, wsl ? wsl.distro : null) || toolsNotice;
+      if (codexLate || copilotLate) c.startProcess();
       c.sessionId = resume || null;
       if (!resume && options.picks) c.startPicks = { ...options.picks };
       c.recovery = this.recovery as never;
@@ -2341,6 +2346,7 @@ export class Aib {
       const keepQwen = new Set([...this.connections.keys()]);
       for (const info of listed) if (info.live) keepQwen.add(chatIdOfChannel(info.channel));
       qwenSub.sweepSettings(this.stateDir, keepQwen);
+      copilotMcp.sweepConfigs(this.stateDir, keepQwen); // Copilot chats' MCP config files (agents/copilot_mcp.ts), kept the same way
     }
     let rebuilt = 0;
     for (const info of listed) {
@@ -2725,6 +2731,7 @@ export class Aib {
 
   #sweepGeminiWithoutKeeper(root: string): void {
     if (!this.keeper && this.hasStateDir) qwenSub.sweepSettings(this.stateDir, new Set(this.connections.keys())); // no keeper: no Qwen chat still runs
+    if (!this.keeper && this.hasStateDir) copilotMcp.sweepConfigs(this.stateDir, new Set(this.connections.keys())); // nor a Copilot chat
     if (!this.keeper && this.hasStateDir) gemini.sweep(this.stateDir, root, new Set(this.connections.keys()));
   }
 
@@ -3025,6 +3032,31 @@ export class Aib {
     } catch (error) {
       log.exception(error, 'Could not set up Antigravity subagent hooks in the distro');
       return unavailable(`the distro could not be asked (${errorText(error)})`);
+    }
+  }
+
+  /**
+   * Copilot's tools (agents/copilot_mcp.ts): Copilot ignores the MCP servers of ACP, so the chat's servers go in a config file of AIB's
+   * own (<state>/copilot/<chat>/mcp.json; a WSL chat's: in its distro, written by the helper) that Copilot is started with
+   * (`--additional-mcp-config @<file>`). Returns a chat line when the chat has no AIB tools after all, else ''. Never throws.
+   * Under test a fixture (not a real Copilot) is left as it is.
+   */
+  async #copilotTools(c: Connection, launched: string[], distro: string | null): Promise<string> {
+    if (!this.hasStateDir || (Deno.env.get('AGENT_STUDIO_TEST') === '1' && isFixture(launched))) return '';
+    const text = copilotMcp.copilotMcpConfig(c.mcpServers);
+    if (!text) return '';
+    const missing = "AIB's own tools (artifacts, docs, helper agents) are not available in this Copilot chat: AIB could not give Copilot its tool list.";
+    try {
+      const file = distro
+        ? (await readyHost(distro).call('mcpconfig.write', { id: c.id, json: text })).path
+        : copilotMcp.writeConfigFile(copilotMcp.configFileOf(this.stateDir, c.id), text);
+      const next = copilotMcp.copilotMcpCommand(c.command, file);
+      if (!next) return ''; // not a command with --acp (not the Copilot program AIB knows): left as it is
+      c.useCommand(next);
+      return '';
+    } catch (error) {
+      log.warning('Copilot MCP config for chat %s could not be written: %s', c.id, errorText(error));
+      return missing;
     }
   }
 

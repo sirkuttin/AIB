@@ -479,6 +479,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'codex.limits',
     'codexhome.write',
     'geminitrust.write',
+    'mcpconfig.write',
     'project.inspect',
     'project.trash',
     'folder.project',

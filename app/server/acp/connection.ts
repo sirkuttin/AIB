@@ -19,6 +19,7 @@ import { COLLECT_FACTS, prefetch as prefetchWslFacts, warm as warmWslFacts, type
 import { createHash } from 'node:crypto';
 import { screen } from './acp_schema.ts';
 import { codexUsable, withCodexMcp } from './codex_mcp.ts';
+import { splitCopilotToolName } from '../agents/copilot_mcp.ts';
 import { CapError, ClientCaps, type FsMode, type TerminalBackend, type TerminalBase, type TerminalPlan } from './client_caps.ts';
 import { clientTerminalChannel, clientTerminalNote, clientTerminalProblem, KeeperClientTerminal } from './keeper_terminal.ts';
 import {
@@ -61,7 +62,7 @@ import { WriteTracker } from '../artifacts/artifacts.ts';
 import { findOption as findPickOption } from '../state/agent_options.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
 import { offeredModeIds, resolveMode } from '../agents/mode_ids.ts';
-import { claudeBase, isClaudeFamily, isCodexFamily } from '../agents/claude_family.ts';
+import { baseAgent, claudeBase, isClaudeFamily, isCodexFamily } from '../agents/claude_family.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
@@ -857,6 +858,20 @@ function mcpOf(raw: unknown): ToolSeen['mcp'] {
   return { server: raw.server, tool: raw.tool, action: isStr(args.action) ? args.action.trim() : '' };
 }
 
+/**
+ * GitHub Copilot CLI (1.0.109, run against a stub model): its tool_call for an MCP tool is titled `<server>-<tool>`, kind other, and
+ * rawInput is the arguments themselves; its permission request carries only the tool's own name as title. So AIB's tool is known from
+ * the tool_call, the way Codex's is (ToolSeen.mcp). Only AIB's own server (agents/copilot_mcp.ts); any other tool: null.
+ */
+function copilotMcpOf(update: Json): ToolSeen['mcp'] {
+  const title = get(update, 'title');
+  const named = isStr(title) ? splitCopilotToolName(title.trim()) : null;
+  if (!named) return null;
+  const raw = get(update, 'rawInput');
+  const args = isDict(raw) ? raw : {};
+  return { server: named.server, tool: named.tool, action: isStr(args.action) ? args.action.trim() : '' };
+}
+
 /** The `_claude/origin` kinds of a cycle Claude Code started on its own (claude-agent-acp's AUTONOMOUS_RESULT_ORIGINS). */
 const AUTONOMOUS_ORIGINS = new Set(['task-notification', 'peer', 'coordinator', 'observer', 'observer-activity']);
 
@@ -1470,7 +1485,7 @@ export class Connection {
   stderr: string[] = [];
   caps: ClientCapsLike;
   openDone = new ThreadEvent();
-  readonly command: string[];
+  command: string[];
   readonly env: Record<string, string> | null;
   closedAt: number | null = null;
   /** The agent process; for a keeper-run agent a stand-in with only pid and kill (it is not our child). */
@@ -1699,6 +1714,15 @@ export class Connection {
       return env;
     }
     return { ...env, CODEX_CONFIG: merged };
+  }
+
+  /**
+   * Change the launch command of an agent that has not started yet (Copilot: `--additional-mcp-config @<file>` names the MCP servers,
+   * which are known only after the connection exists: agents/copilot_mcp.ts).
+   */
+  useCommand(command: string[]): void {
+    if (this.process !== null) throw new RuntimeError('The agent already started');
+    this.command = command;
   }
 
   startProcess(): void {
@@ -3494,7 +3518,7 @@ export class Connection {
         main,
         turn: this.promptSeq,
         parent: isStr(parent) ? parent : null,
-        mcp: mcpOf(get(update, 'rawInput')),
+        mcp: mcpOf(get(update, 'rawInput')) ?? (baseAgent(this.provider) === 'copilot' ? copilotMcpOf(update) : null),
         echo: !main || isStr(parent) ? toolEcho(update) : null,
       };
       this.#tools.set(id, seen);
