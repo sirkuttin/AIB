@@ -150,7 +150,7 @@ Deno.test({
  * The ACP-listed entry above is what a plain codex-acp does and stays a guard for that shape.
  */
 Deno.test('PromptNamesTheRecipeTest test_artifact_prompt_has_no_all_tools_recipe', () => {
-  const text = Deno.readTextFileSync(join(REPO_DIR, 'app', 'server', 'acp', 'connection.ts')).replace(/\r\n/g, '\n');
+  const text = Deno.readTextFileSync(join(REPO_DIR, 'app', 'server', 'acp', 'prompts.ts')).replace(/\r\n/g, '\n');
   const match = /export const TOOLS_LOADING = ([\s\S]*?);\n/.exec(text);
   assert(match);
   assert(!match[1].includes('ALL_TOOLS'));

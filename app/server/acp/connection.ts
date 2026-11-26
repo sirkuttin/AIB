@@ -10,1175 +10,88 @@
 import type { AllowGate } from '../allow/gate.ts';
 import { promptHash } from '../artifacts/served.ts';
 import { houseRules } from '../allow/brief.ts';
-import type { MatchContext } from '../allow/matcher.ts';
-import { ALL_OWN_NAMES, canonicalTool, isAutoApproved, type ToolAction } from '../allow/own_tools.ts';
-import { stripAibMessage } from '../allow/aib_prefix.ts';
-import { KILL_BY_NAME_REASON, permissionKillsByName } from '../allow/kill_by_name.ts';
-import { factsNow, LinuxFacts, type LinuxNeeds, LinuxView } from '../allow/linux.ts';
-import { COLLECT_FACTS, prefetch as prefetchWslFacts, warm as warmWslFacts, type WslFactsSource } from '../allow/wsl_facts.ts';
+import { LinuxFacts } from '../allow/linux.ts';
 import { createHash } from 'node:crypto';
-import { screen } from './acp_schema.ts';
 import { codexUsable, withCodexMcp } from './codex_mcp.ts';
-import { splitCopilotToolName } from '../agents/copilot_mcp.ts';
-import { CapError, ClientCaps, type FsMode, type TerminalBackend, type TerminalBase, type TerminalPlan } from './client_caps.ts';
-import { clientTerminalChannel, clientTerminalNote, clientTerminalProblem, KeeperClientTerminal } from './keeper_terminal.ts';
-import {
-  applyUpdate,
-  augmentInitialize,
-  type BreadthState,
-  buildConfigRequest,
-  checkMode,
-  currentValue,
-  type McpServer,
-  newState,
-  optionValues,
-  publicState,
-  selectMcpServers,
-  sessionCapabilities,
-  isModelsOption,
-  withModelsOption,
-  withServerModels,
-} from './breadth.ts';
-import { validateContent, validateSchema, validateUrlRequest } from './elicitation.ts';
-import { arraySource, type Ev, type EventSource, page, type Page, type PageQuery } from './event_pages.ts';
+import { ClientCaps } from './client_caps.ts';
+import { type BreadthState, type McpServer, newState, publicState, sessionCapabilities } from './breadth.ts';
+import { arraySource, type Ev, type EventSource } from './event_pages.ts';
 import type { HistoryClient } from '../history/client.ts';
 import { anchorOf, type ConversationLines, KEPT_KINDS, type KeptLine, LineMerger } from '../history/lines.ts';
-import type { Checkpoint, OpenInfo, StoredEvent, StoreEvent } from '../history/store.ts';
-import { type HeldCard, MAX_ITEMS, MAX_SCHEDULED, MessageQueue, type QueueItem, type SavedItem, STEER_RESTART_NOTE, type SteerItem } from './msgqueue.ts';
-import { killVerified, type ProcId } from '../platform/kill_verified.ts';
-import { type AuthMethod, describeAuthMethods, isAuthRequired, PromptStateUnknown, RpcError } from './rpc_errors.ts';
-import {
-  eventImageSize,
-  type FileSummary,
-  type ImageBlock,
-  mapFileAttachments,
-  MAX_EVENT_IMAGE_BYTES,
-  MAX_TOTAL_ATTACHMENT_BYTES,
-  splitAttachments,
-  validateFileAttachments,
-  validateImageAttachments,
-} from './attachments.ts';
+import type { Checkpoint, OpenInfo } from '../history/store.ts';
+import { MessageQueue, type SteerItem } from './msgqueue.ts';
+import { type AuthMethod } from './rpc_errors.ts';
+import { eventImageSize, MAX_EVENT_IMAGE_BYTES } from './attachments.ts';
 import { WriteTracker } from '../artifacts/artifacts.ts';
-import { findOption as findPickOption } from '../state/agent_options.ts';
-import { betaAgent } from '../agents/beta_catalog.ts';
-import { offeredModeIds, resolveMode } from '../agents/mode_ids.ts';
-import { baseAgent, claudeBase, isClaudeFamily, isCodexFamily } from '../agents/claude_family.ts';
-import { artifactToolCommand } from '../artifacts/mcp.ts';
-import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
-import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
-import { type Descendant, descendants, refreshDescendants } from '../platform/descendants.ts';
-import { refreshWslDescendants, wslDescendants, wslKillVerified } from '../wsl/procs.ts';
+import { claudeBase, isCodexFamily } from '../agents/claude_family.ts';
+import { ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
-import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
-import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
+import type { KeeperRecord } from '../keeper/client.ts';
+import { type KeeperChannel, type KeeperLink } from '../keeper/link.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
 import { WslClientCaps } from './wsl_caps.ts';
-import { assertTestAuth, testCredentialEnv } from './test_auth_guard.ts';
-import { distroName, guardRealWslAgent, peekWslHost, wslTestHomeEnv } from '../wsl/access.ts';
-import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
-import { getLogger } from '../core/log.ts';
-import { HeldElsewhere, type Holder } from '../ownership/claude_sessions.ts';
-import { activeWriterError } from '../ownership/codex_threads.ts';
-import { DOCS_RULE } from '../docs/tool_defs.ts';
-import { claudeConfigDir, isForkSkill, SUBAGENT_PROMPT, SUBAGENTS_OFF_NO_BASH_PROMPT, SUBAGENTS_OFF_PROMPT, typedForkSkillText } from '../subagents/claude_config.ts';
+import { distroName, guardRealWslAgent, wslTestHomeEnv } from '../wsl/access.ts';
+import { type Holder } from '../ownership/claude_sessions.ts';
+import { SUBAGENT_PROMPT, SUBAGENTS_OFF_NO_BASH_PROMPT, SUBAGENTS_OFF_PROMPT } from '../subagents/claude_config.ts';
+import { isDict, isStr, pyStr, pyTruthy, ValueError } from '../core/py.ts';
 import {
-  clip,
-  isDict,
-  isInt,
-  isStr,
-  PY_SPACE,
-  pyCompare,
-  pyLen,
-  pyRepr,
-  pyStr,
-  pyStrip,
-  pyTruthy,
-  pyTypeName,
-  ValueError,
-} from '../core/py.ts';
-
-const log = getLogger('acp_connection');
-
-/** "Nov 23, 9:00 AM": a scheduled time in this computer's local time (for the "Sent late" line in the chat). */
-function scheduleStamp(ms: number): string {
-  return new Date(ms).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
-
-export const MAX_EVENTS = 6000;
-const SEP = Deno.build.os === 'windows' ? '\\' : '/';
-
-type Json = Record<string, unknown>;
-
-// ---- Exception classes, by name (the host RPC and the tests tell them apart by class name) ----------------------------------
-
-export class RuntimeError extends Error {
-  override name = 'RuntimeError';
-}
-export class TimeoutError extends Error {
-  override name = 'TimeoutError';
-}
-/** Writing to an agent whose stdin is gone. */
-export class BrokenPipeError extends Error {
-  override name = 'BrokenPipeError';
-}
-class AttributeError extends Error {
-  override name = 'AttributeError';
-}
-
-/** type(error).__name__ */
-export function errorName(error: unknown): string {
-  if (error instanceof PromptStateUnknown) return 'PromptStateUnknown';
-  if (error instanceof RpcError) return 'RpcError';
-  return error instanceof Error ? error.name : pyTypeName(error);
-}
-
-/** str(error) */
-export function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/** except (OSError, ValueError): Deno's I/O errors, a broken pipe, or a ValueError of any ported module. */
-function isOsOrValueError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if (Object.values(Deno.errors).some((type) => error instanceof type)) {
-    return true;
-  }
-  return ['ValueError', 'OSError', 'BrokenPipeError'].includes(error.name) ||
-    error instanceof PromptStateUnknown;
-}
-
-function isOsError(error: unknown): boolean {
-  return error instanceof Error &&
-    (Object.values(Deno.errors).some((type) => error instanceof type) ||
-      error.name === 'BrokenPipeError');
-}
-
-/** dict.get on a value that must be a dict: raises AttributeError when it is not a dict. */
-function pget(value: unknown, key: string, fallback: unknown = null): unknown {
-  if (!isDict(value)) {
-    throw new AttributeError(
-      `'${pyTypeName(value)}' object has no attribute 'get'`,
-    );
-  }
-  return Object.hasOwn(value, key) ? value[key] : fallback;
-}
-
-/** dict.get on a dict known to be one. */
-function get(value: Json, key: string, fallback: unknown = null): unknown {
-  return Object.hasOwn(value, key) ? value[key] : fallback;
-}
-
-/** Equality between JSON values (1 == 1.0 == true, dicts and lists by content). */
-export function pyEq(a: unknown, b: unknown): boolean {
-  if (
-    (typeof a === 'number' || typeof a === 'boolean') &&
-    (typeof b === 'number' || typeof b === 'boolean')
-  ) {
-    return Number(a) === Number(b);
-  }
-  if (a === null || a === undefined || b === null || b === undefined) {
-    return (a ?? null) === (b ?? null);
-  }
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return Array.isArray(a) && Array.isArray(b) && a.length === b.length &&
-      a.every((v, i) => pyEq(v, b[i]));
-  }
-  if (isDict(a) && isDict(b)) {
-    const ka = Object.keys(a);
-    return ka.length === Object.keys(b).length &&
-      ka.every((k) => Object.hasOwn(b, k) && pyEq(a[k], b[k]));
-  }
-  return a === b;
-}
-
-/** json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')) for the prompt fingerprint. */
-export function sortedCompactJson(value: unknown): string {
-  if (value === null || value === undefined) return 'null';
-  if (Array.isArray(value)) {
-    return '[' + value.map(sortedCompactJson).join(',') + ']';
-  }
-  if (isDict(value)) {
-    return '{' + Object.keys(value).sort(pyCompare).map((k) => JSON.stringify(k) + ':' + sortedCompactJson(value[k])).join(',') +
-      '}';
-  }
-  return JSON.stringify(value);
-}
-
-const ENCODER = new TextEncoder();
-const RSTRIP = new RegExp(`[${PY_SPACE}]+$`);
-
-function now(): number {
-  return Date.now() / 1000;
-}
-
-function hex(bytes: number): string {
-  return [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/** secrets.token_urlsafe(n) */
-function tokenUrlsafe(bytes: number): string {
-  let text = '';
-  for (const b of crypto.getRandomValues(new Uint8Array(bytes))) {
-    text += String.fromCharCode(b);
-  }
-  return btoa(text).replaceAll('+', '-').replaceAll('/', '_').replace(
-    /=+$/,
-    '',
-  );
-}
-
-function sleep(ms: number): { promise: Promise<void>; cancel(): void } {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let done: () => void = () => {};
-  const promise = new Promise<void>((resolve) => {
-    done = resolve;
-    timer = setTimeout(resolve, ms);
-  });
-  return { promise, cancel: () => (clearTimeout(timer), done()) };
-}
-
-/** `task` or false after `ms`; the timer never outlives the call. */
-async function within<T>(task: Promise<T>, ms: number): Promise<T | false> {
-  const timer = sleep(ms);
-  try {
-    return await Promise.race([task, timer.promise.then(() => false as const)]);
-  } finally {
-    timer.cancel();
-  }
-}
-
-// ---- threading.Event -------------------------------------------------------------------------------------------------------
-
-export class ThreadEvent {
-  #set = false;
-  #waiters = new Set<() => void>();
-
-  isSet(): boolean {
-    return this.#set;
-  }
-
-  set(): void {
-    if (this.#set) return;
-    this.#set = true;
-    const waiters = [...this.#waiters];
-    this.#waiters.clear();
-    for (const wake of waiters) wake();
-  }
-
-  clear(): void {
-    this.#set = false;
-  }
-
-  /** True once set; false when `timeoutMs` passed first (no timeout: waits for ever). */
-  wait(timeoutMs?: number): Promise<boolean> {
-    if (this.#set) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const wake = () => {
-        if (timer !== undefined) clearTimeout(timer);
-        resolve(true);
-      };
-      this.#waiters.add(wake);
-      if (timeoutMs !== undefined) {
-        timer = setTimeout(() => {
-          this.#waiters.delete(wake);
-          resolve(this.#set);
-        }, Math.max(0, timeoutMs));
-      }
-    });
-  }
-}
-
-// ---- text lines the way a text-mode pipe gives them -------------------------------------------------------------------
-
-/**
- * Bytes in, lines out, as `for line in process.stdout` does with text=True, encoding='utf-8', errors='replace': invalid UTF-8
- * becomes U+FFFD, a BOM is kept, and universal newlines apply (\r\n and a lone \r end a line too). Lines come without their
- * line end (every caller strips it). Long lines are joined once, not grown chunk by chunk.
- */
-export class PyTextLines {
-  #decoder = new TextDecoder('utf-8', { ignoreBOM: true });
-  #parts: string[] = [];
-  #pendingCR = false;
-
-  /** No part of a line is waiting for its end (a keeper snapshot is only taken then). */
-  get idle(): boolean {
-    return !this.#parts.length && !this.#pendingCR;
-  }
-
-  /** Lines completed by this chunk. `final` flushes: an incomplete UTF-8 sequence becomes U+FFFD and the last line is returned. */
-  feed(chunk: Uint8Array | null, final = false): string[] {
-    let text = chunk ? this.#decoder.decode(chunk, { stream: !final }) : this.#decoder.decode();
-    if (this.#pendingCR) {
-      text = '\r' + text;
-      this.#pendingCR = false;
-    }
-    if (!final && text.endsWith('\r')) {
-      text = text.slice(0, -1);
-      this.#pendingCR = true;
-    }
-    if (text.includes('\r')) text = text.replace(/\r\n?/g, '\n');
-    const lines: string[] = [];
-    let start = 0;
-    for (
-      let index = text.indexOf('\n');
-      index >= 0;
-      index = text.indexOf('\n', start)
-    ) {
-      this.#parts.push(text.slice(start, index));
-      lines.push(
-        this.#parts.length === 1 ? this.#parts[0] : this.#parts.join(''),
-      );
-      this.#parts = [];
-      start = index + 1;
-    }
-    if (start < text.length) this.#parts.push(start ? text.slice(start) : text);
-    if (final && this.#parts.length) {
-      lines.push(this.#parts.join(''));
-      this.#parts = [];
-    }
-    return lines;
-  }
-}
-
-// ---- what the Connection uses from its neighbours ------------------------------------------------------------------------------
-
-/** What the Connection uses of client_caps.ClientCaps (the fs and terminal capabilities the agent may call back into). */
-export interface ClientCapsLike {
-  readonly workspace: string;
-  capabilities(): Json;
-  handles(method: string): boolean;
-  /** Answer one agent->client request (through the write function it was given); resolves once answered. */
-  dispatch(message: Json): void | Promise<void>;
-  shutdown(): void | Promise<void>;
-  public(): Json;
-}
-
-export type CapsFactory = (
-  workspace: string,
-  terminal: boolean,
-  fs: FsMode,
-  knownSession: (sid: string) => boolean,
-  record: (kind: string, data: Json) => void,
-  writeResponse: (message: Json) => void,
-) => ClientCapsLike;
-
-const defaultCaps: CapsFactory = (
-  workspace,
-  terminal,
-  fs,
-  knownSession,
-  record,
-  writeResponse,
-) =>
-  new ClientCaps(workspace, {
-    terminal,
-    fs,
-    knownSession,
-    record,
-    writeResponse,
-  });
-
-export interface Receipt {
-  fingerprint: string;
-  state: string;
-  /** Set once session/prompt was written to the agent: a deliberate stop then knows the agent had the message. */
-  sent?: boolean;
-}
-
-/** The Recovery hook AIB installs (state/recovery.ts). Never throws into the caller. */
-export interface ConnectionRecovery {
-  receipt(connection: Connection, messageId: string): Receipt | null;
-  receiptChanged(
-    connection: Connection,
-    messageId: string,
-    receipt: Receipt,
-  ): void;
-  queueChanged(connection: Connection): void;
-  connectionClosed(connection: Connection): void;
-  store?:
-    | { unknownReceipts(provider: string, sessionId: string): unknown[] }
-    | null;
-}
-
-export interface SessionLease {
-  release(): void;
-}
-
-export interface AuthState {
-  methods: AuthMethod[];
-  message: string;
-  error: string;
-  working: boolean;
-  /**
-   * Deno only. 'prompt': a message failed mid-session because the agent's login expired (ACP auth_required); the chat keeps working
-   * once signed in, and AIB sends that message again once. Absent: sign-in while the chat opens (setup).
-   */
-  during?: 'prompt';
-  /** Deno only: what the agent said (its own text, then the error), kept under the card. */
-  detail?: string;
-}
-
-interface Pending {
-  done: ThreadEvent;
-  method: string;
-  params: unknown;
-  response?: Json;
-}
-
-interface AgentRequest {
-  rpcId: unknown;
-  params: Json;
-  /** Allow rules: the card's "Always allow" choice (computed once, on first snapshot). */
-  allow?: Json;
-}
-
-export interface PendingChange {
-  key: string;
-  kind: string;
-  configId: unknown;
-  value: unknown;
-  queuedAt: number;
-}
-
-/** What one snapshot writes: chunk notes of the events since the last one, then the snapshot note (holding the last chunk). */
-interface SnapshotPlan {
-  chunks: Json[];
-  note: Json;
-  bytes: number;
-  chunkBytes: number;
-  last: number;
-}
-
-type Hook = (connection: Connection) => unknown;
-
-export interface ConnectionOptions {
-  enableTerminal?: boolean;
-  enableFs?: FsMode;
-  /** Extra variables for an agent the user added in Settings. */
-  env?: Record<string, string> | null;
-  /** false: the chat's worktree is still being made; startProcess() runs once its folder exists. */
-  start?: boolean;
-  capsFactory?: CapsFactory;
-  /** Run the agent in the keeper instead of as a child of this process. */
-  keeper?: KeeperLink | null;
-  /** The connection id (a chat rebuilt from the keeper keeps the id it had). */
-  id?: string;
-  /** Rebuild this chat from a live keeper channel instead of starting an agent (needs `keeper`). */
-  rebuild?: ChannelInfo | null;
-  /** A chat in a WSL project (needs `keeper`: the distro's Linux keeper). AIB resolves it through the distro's WSL host. */
-  wsl?: WslSpawn | null;
-  /** The agent host's history Worker (needs `keeper`): this chat's events go into its store; take-over starts at its checkpoint. */
-  history?: HistoryClient | null;
-  /**
-   * A reopened conversation whose chat has a history store (owner rule 2026-11-17: a conversation is one chat): the chat keeps its id
-   * and goes on in that store. Its numbering (eventsId), the newest stored seq and the stored tail (shown at once; older pages come
-   * from the store). Needs `history`.
-   */
-  continueStore?: ContinueStore | null;
-}
-
-/** What a reopened chat continues from (AIB reads it from the chat's history store). */
-export interface ContinueStore {
-  eventsId: string;
-  /** The newest event seq in the store: the chat's next event is this + 1. */
-  sequence: number;
-  /** The store's newest events of the chat itself, oldest first. */
-  events: Record<string, unknown>[];
-}
-
-/**
- * Where and how a WSL chat's agent runs in its distro (docs/wsl/design.md sections 2 and 5). The Connection's `cwd` stays the project
- * ref (`wsl://ubuntu/home/u/app`: what AIB, the page and the records key on); the agent gets `linuxPath`. `env` is the distro's
- * login environment (never AIB's own), `program` the helper's `which` of the command's program; `caps` the helper calls the agent's
- * client terminals need. A rebuilt chat has none of the three: it starts nothing.
- */
-export interface WslSpawn {
-  distro: string;
-  linuxPath: string;
-  env?: Record<string, string>;
-  program?: string;
-  caps?: { env(): Promise<Record<string, string>>; which(name: string): Promise<string | null> };
-}
-
-/** A tracker that observes nothing: a WSL chat's files are not Windows files, so none of them can become an artifact by path. */
-class NoWrites extends WriteTracker {
-  override observe(): string[] {
-    return [];
-  }
-  override finished(): string[] {
-    return [];
-  }
-}
-
-/**
- * The format of a keeper `snapshot` note this code writes (its `sv`). 1: the whole event history inside the note (beta.8 and before;
- * still restored). 2: the note holds the chat's state without its history; each snapshot also stores only the events made since the
- * one before (in the note itself, or in `t: 'event'` chunk notes just before it when they do not fit), so a note stays small however
- * long the chat is, and the journal keeps the chunks the history still needs (truncate stops at the oldest of them).
- */
-export const SNAPSHOT_VERSION = 2;
-/** A snapshot note larger than this is not written (a note is at most 16 MiB); the replay then starts at the one before, or at 0. */
-export const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
-/** The `lines` note (AIB's kept lines a session/load puts back): the newest that fit. */
-const MAX_LINES_NOTE_BYTES = 8 * 1024 * 1024;
-
-/** The newest lines whose JSON fits in `bytes`, oldest first. */
-function linesWithin(lines: KeptLine[], bytes: number): KeptLine[] {
-  let used = 0;
-  let i = lines.length;
-  while (i > 0) {
-    const size = ENCODER.encode(JSON.stringify(lines[i - 1])).length + 1;
-    if (used + size > bytes) break;
-    used += size;
-    i--;
-  }
-  return lines.slice(i);
-}
-
-/** History store writes (history-loading design 3.1): queued events are committed this often (written_seq only). */
-export const HISTORY_FLUSH_MS = 200;
-/** Each live helper's newest events kept in RAM after a take-over (the rest are read from the store when asked). */
-export const HISTORY_HELPER_TAIL = 200;
-/**
- * The `aib-history-v2` switch, server side: ON by default (AIB_HISTORY_V2=0 turns it off, for one release). Off: new chats get no
- * store and snapshots carry the history in chunk notes as in beta.10 (a chat that already has a store keeps it: see
- * Aib.historyClient). On since fix/history-store-on: the mid-turn crash take-over (keeper_crash_e2e) holds under parallel load.
- */
-export function historyV2(): boolean {
-  try {
-    return Deno.env.get('AIB_HISTORY_V2') !== '0';
-  } catch {
-    return false;
-  }
-}
-/** Where a test stops the quiet-point checkpoint, to act out a crash right after that step (design 3.2). */
-export type CheckpointStep = 'flush' | 'note' | 'commit';
-/** Events per chunk note, in UTF-8 bytes (several chunks when a snapshot has more new events, e.g. after a session/load). */
-export const EVENT_CHUNK_BYTES = 4 * 1024 * 1024;
-
-/** Why a keeper-run agent ended without being asked to: the keeper itself went away. */
-export const KEEPER_LOST =
-  'Interrupted: the keeper (the AIB process that holds running agents) stopped, so this agent stopped with it. Nothing was sent again.';
-
-// ---- the test guard -----------------------------------------------------------------------------------------------------------
-
-function resolvePath(part: string): string {
-  try {
-    return Deno.realPathSync(part);
-  } catch {
-    const absolute = /^([A-Za-z]:[\\/]|[\\/])/.test(part) ? part : Deno.cwd() + SEP + part;
-    const out: string[] = [];
-    for (const piece of absolute.split(/[\\/]+/)) {
-      if (piece === '..') out.length > 1 && out.pop();
-      else if (piece !== '.' && piece !== '') out.push(piece);
-    }
-    return (Deno.build.os === 'windows' ? '' : '/') + out.join(SEP);
-  }
-}
-
-function normcase(path: string): string {
-  return Deno.build.os === 'windows' ? path.replaceAll('/', '\\').toLowerCase() : path;
-}
-
-export function isFixture(command: unknown): boolean {
-  let fixtures: string;
-  try {
-    fixtures = normcase(resolvePath(TESTS_DIR)).replace(/[\\/]+$/, '');
-  } catch {
-    return false;
-  }
-  for (const part of Array.isArray(command) ? command : [command]) {
-    const resolved = normcase(resolvePath(String(part)));
-    if (
-      resolved.startsWith(fixtures + SEP) &&
-      resolved.length > fixtures.length + 1
-    ) return true;
-  }
-  return false;
-}
-
-/**
- * Under test (AGENT_STUDIO_TEST=1) a Connection may only start a fixture from the repo's work/ folder; anything else would launch
- * a real agent, so it fails loudly. STUDIO_REAL_ADAPTER_TESTS=1 or AGENT_STUDIO_ALLOW_REAL_AGENT=1 lifts it.
- */
-export function guardRealAgent(command: string[]): void {
-  if (
-    Deno.env.get('AGENT_STUDIO_TEST') !== '1' ||
-    Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' ||
-    Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1'
-  ) return;
-  if (isFixture(command)) return;
-  throw new RuntimeError(
-    `Test guard: refusing to start a real agent process: ${
-      pyRepr(command)
-    }. Pass connection_factory= to AIB, or use a fixture under work/.`,
-  );
-}
-
-let testHome: string | null = null;
-export const HOME_VARS = [
-  'HOME',
-  'USERPROFILE',
-  'CLAUDE_CONFIG_DIR',
-  'CODEX_HOME',
-  'XDG_CONFIG_HOME',
-  'XDG_DATA_HOME',
-  'XDG_STATE_HOME',
-  'XDG_CACHE_HOME',
-  'APPDATA',
-  'LOCALAPPDATA',
-];
-
-/**
- * The temp-folder variables a real agent under test gets, pointing at <test home>/tmp (architect review MF 12): Claude Code writes
- * task output under %TEMP%\claude\<project>. A list of its own: HOME_VARS is reused elsewhere.
- */
-export const TEMP_VARS = ['TEMP', 'TMP', 'TMPDIR'];
-
-/** Under test, a real (non-fixture) agent gets a throwaway home so it can never write into the owner's ~/.claude. {} otherwise. */
-export function testHomeEnv(command: string[]): Record<string, string> {
-  if (Deno.env.get('AGENT_STUDIO_TEST') !== '1' || isFixture(command)) {
-    return {};
-  }
-  if (testHome === null) {
-    const folder = Deno.makeTempDirSync({ prefix: 'agent-studio-test-home-' });
-    testHome = folder;
-    globalThis.addEventListener('unload', () => {
-      try {
-        Deno.removeSync(folder, { recursive: true });
-      } catch { /* best effort, as shutil.rmtree(ignore_errors=True) */ }
-    });
-  }
-  const tmp = `${testHome}${SEP}tmp`;
-  try {
-    Deno.mkdirSync(tmp, { recursive: true });
-  } catch { /* made */ }
-  return Object.fromEntries([
-    ...Object.entries(testCredentialEnv(testHome)),
-    ...HOME_VARS.map((name) => [name, testHome!]),
-    ...TEMP_VARS.map((name) => [name, tmp]),
-  ]);
-}
-
-/**
- * Under test a real (non-fixture) agent may only start on an explicit test auth setup: a loopback stub endpoint and a key, never a
- * sign-in (acp/test_auth_guard.ts; incident 2026-11-25). `env`: what the process will see beyond this process's own environment.
- * Throws before the process exists. Checked at every launch path (direct, keeper, WSL) and for the Codex limits probe.
- */
-export function guardRealAgentAuth(provider: string, command: string[], env: Record<string, string>, base: Record<string, string> = Deno.env.toObject()): void {
-  if (Deno.env.get('AGENT_STUDIO_TEST') !== '1' || isFixture(command) || inTestFixtureRoot(command)) return;
-  assertTestAuth(provider, command, { ...base, ...env });
-}
-
-/**
- * A built app under test cannot see work/, so isFixture misses its fake agent: the test names the folder that holds its fakes in
- * AIB_TEST_FIXTURE_ROOT, and only a program inside that folder passes. Not a switch that lets any agent through.
- */
-function inTestFixtureRoot(command: string[]): boolean {
-  const root = (Deno.env.get('AIB_TEST_FIXTURE_ROOT') ?? '').trim();
-  if (!root) return false;
-  const dir = normcase(resolvePath(root)).replace(/[\\/]+$/, '');
-  return command.some((part) => {
-    const p = normcase(resolvePath(String(part)));
-    return p.startsWith(dir + SEP) && p.length > dir.length + 1;
-  });
-}
-
-/**
- * The program a keeper spawn gets: Deno.Command looks a bare name up on PATH itself; the keeper looks in its own PATH, which can
- * be older than ours, so a bare name is resolved here, with the environment the agent gets.
- */
-export function resolveProgram(program: string, env: Record<string, string>): string {
-  if (/[\\/]/.test(program)) return resolvePath(program);
-  const win = Deno.build.os === 'windows';
-  const path = env.PATH ?? env.Path ?? Deno.env.get('PATH') ?? '';
-  const exts = win ? ['.exe', '.com', ...(env.PATHEXT ?? '.BAT;.CMD').split(';').filter(Boolean).map((e) => e.toLowerCase())] : [''];
-  const hasExt = win && /\.[^\\/.]+$/.test(program);
-  for (const dir of path.split(win ? ';' : ':').filter(Boolean)) {
-    for (const ext of hasExt ? [''] : exts) {
-      const candidate = dir.replace(/[\\/]+$/, '') + SEP + program + ext;
-      try {
-        const info = Deno.statSync(candidate);
-        if (info.isFile && (win || ((info.mode ?? 0) & 0o111))) return candidate;
-      } catch { /* not here */ }
-    }
-  }
-  return program;
-}
+  log,
+  MAX_EVENTS,
+  type Json,
+  RuntimeError,
+  errorName,
+  errorText,
+  isOsOrValueError,
+  isOsError,
+  get,
+  ENCODER,
+  now,
+  within,
+} from './conn_util.ts';
+import { ThreadEvent, PyTextLines } from './thread_text.ts';
+import {
+  type ClientCapsLike,
+  type Elsewhere,
+  defaultCaps,
+  type Receipt,
+  type ConnectionRecovery,
+  type SessionLease,
+  type AuthState,
+  type Pending,
+  type AgentRequest,
+  type PendingChange,
+  type Hook,
+  type ConnectionOptions,
+  type WslSpawn,
+  NoWrites,
+} from './conn_types.ts';
+import { type CheckpointStep } from './conn_limits.ts';
+import { isFixture, guardRealAgent, testHomeEnv, guardRealAgentAuth, resolveProgram } from './launch_env.ts';
+import {
+  ARTIFACT_PROMPT,
+  WSL_ARTIFACT_PROMPT,
+  CODEX_MCP_STARTUP_WAIT_MS,
+  WORKTREE_PROMPT,
+  SHARED_FOLDER_PROMPT,
+  LOCAL_ONLY_WORKTREE_PROMPT,
+  IGNORED_SHARED_WORKTREE,
+} from './prompts.ts';
+import { type ToolSeen, type BackgroundTool, isOwnArtifactEntry, subagentEnd } from './tool_tracking.ts';
+import { STEER_AGENTS } from './conn_steer.ts';
+import { ReplayWindow, quietSeconds, followUpSeconds } from './replay_window.ts';
+import { replayMethods, type ReplayMethods } from './conn_replay.ts';
+import { installMethods } from './install_methods.ts';
+import { historyMethods, type HistoryMethods } from './conn_history.ts';
+import { toolMethods, type ToolMethods } from './conn_tools.ts';
+import { ioMethods, type IoMethods } from './conn_io.ts';
+import { setupMethods, type SetupMethods } from './conn_setup.ts';
+import { handoffMethods, type HandoffMethods } from './conn_handoff.ts';
+import { turnMethods, type TurnMethods } from './conn_turn.ts';
+import { steerMethods, type SteerMethods } from './conn_steer_methods.ts';
+import { queueMethods, type QueueMethods } from './conn_queue.ts';
+import { allowMethods, type AllowMethods } from './conn_allow.ts';
 
 // ---- the connection -----------------------------------------------------------------------------------------------------------
-
-/**
- * An agent connects to MCP servers in the background: a first prompt sent as the chat opens can find no studio_artifact tools yet.
- * Codex lists them directly (acp/codex_mcp.ts: omit_tools_from), so it needs no recipe to find them.
- */
-export const TOOLS_LOADING = 'The studio_artifact tools can take a few seconds to appear at the start of a chat: if you do not see them yet, ' +
-  'wait a few seconds and look again (more than once) before telling the user they are missing.';
-
-/**
- * How the agent writes a command for the user to run. AIB puts a "Run in terminal" button on a fenced shell block in a reply
- * (run-terminal-ui.js: the language tag decides) that pastes the command into the chat's terminal and never presses Enter.
- */
-export const COMMANDS_RULE =
-  'When you give the user a shell command to run, put it in its own fenced code block tagged bash (powershell on Windows), ' +
-  'one command per block, with no explanation or comments inside the block; AIB then shows a Run in terminal button that ' +
-  "pastes it into the chat's terminal without running it. Write the explanation outside the block. You cannot type a password, so " +
-  'never run a command that needs sudo yourself: give it to the user in such a block, and carry on once they say it is done.';
-
-export const ARTIFACT_PROMPT =
-  'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
-  'mean this viewer and its studio_artifact tool (the doc tool is mcp__studio_artifact__doc where MCP tool names are prefixed). ' + DOCS_RULE + ' When you make something else the user ' +
-  'should look at rather than source code (an HTML page, one-off report, chart, diagram, SVG or image), ' +
-  "save its file under the project's outputs/ folder (for example outputs/report.html), never in the project root " +
-  'or among source files, then publish it with the `publish` tool (pass a file path or the content) and mention it in your reply ' +
-  'as the Markdown link the tool returns. When you change it, call `publish` again with its `id` so it gets a new ' +
-  'version, and do not tell the user to open the file by hand. Only publish to claude.ai (or any other web ' +
-  'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE;
-
-/**
- * The same for a chat in a WSL project (design section 11). publish takes the content or a Linux `path` inside the project (AIB
- * reads the file through the distro's helper, as a snapshot: wsl/artifact_read.ts). A chat in its own copy also
- * gets the merge tools (WORKTREE_PROMPT says so; the merge runs in the distro).
- */
-export const WSL_ARTIFACT_PROMPT =
-  'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
-  'mean this viewer and its studio_artifact tool. This project is in WSL. When you make something the user should look at rather ' +
-  'than source code (an HTML page, one-off report, chart, diagram, SVG, image or PDF), publish it with the `publish` ' +
-  'tool, by its content or by its Linux `path` (relative to the chat folder, or absolute inside the chat or project folder; any ' +
-  'kind up to 25 MB, PNG and other images included), and mention it in your reply as the Markdown link the tool returns. AIB copies ' +
-  'a file when you publish it: after changing the file, call `publish` with its `id` and the same path (or the new content) to publish the new ' +
-  'version. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE.replace(' (powershell on Windows)', '');
-
-/** How long codex-acp waits for AIB's tool server before the first turn (architect review S5: 10 s, the forwarder retries 15 s itself). */
-export const CODEX_MCP_STARTUP_WAIT_MS = 10_000;
-
-export const WORKTREE_PROMPT =
-  'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
-  'Helpers you start work in their own copies: when one finishes, merge its branch into yours with `git merge <branch>`. ' +
-  "When your work is done and tested (for example before a release), merge it into the project's main branch yourself with the " +
-  "merge_into_project tool (action merge); you don't need to ask first. If main has moved, the tool brings main into your copy: resolve any " +
-  'conflicts there, commit, and call it again.';
-
-/**
- * Local-only files (AIB's block of .git/info/exclude; host/aib.ts fills Connection.localOnly). Every chat whose project keeps
- * aib-shared/ local only is told SHARED_FOLDER_PROMPT (owner 2026-11-17); a chat in its own copy reaches the main folder's
- * aib-shared/ through the copy's `aib-shared` link (worktrees/shared_link.ts). A chat in its own copy is also told where the main
- * folder's other local-only paths are ({paths}).
- */
-export const SHARED_FOLDER_PROMPT = 'aib-shared/ in the project folder is shared by every agent and chat, never committed.';
-export const LOCAL_ONLY_WORKTREE_PROMPT = 'Local-only files (git never commits them) are kept in the main project folder, not in this ' +
-  'copy: {paths}. Read and write them there by their full path. Never create those paths in this copy: ' +
-  'files there are not shared with other chats.';
-/**
- * A WSL chat in its own copy (wsl/local_only.ts): the main folder's other git-ignored folders and files, granted like the local-only
- * folders. Windows chats never get it (Connection.localOnly.ignored is only set for WSL chats).
- */
-export const IGNORED_SHARED_WORKTREE = 'These folders and files git ignores are in the main project folder too, not in this copy: ' +
-  '{paths}. Read and edit them there by their full path: they are shared with the main folder, so an edit there is live at once ' +
-  "and is not part of this copy or its branch.";
-
-/**
- * Build plan 1.1 (4): two chats work in the same project folder. The agents get this line once, on their next prompt (the new chat's
- * first, the working chat's next); the person sees sharedFolderNote in the new chat.
- */
-export const SHARED_FOLDER_CONTEXT = 'Another agent works in this folder at the same time. Do not run git stash, git reset --hard, ' +
-  'git checkout -- / git switch, git clean or git rebase here. Commit only files you changed yourself (git add <paths>, never git add -A).';
-/** The grey line in a new folder chat that starts while another folder chat (titled `title`) is working there. */
-export function sharedFolderNote(title: string): string {
-  return `Another chat (“${title}”) is working in this same folder. Its edits show up here as it makes them.`;
-}
-
-/** Match with `$` that also matches before one trailing newline. */
-export const OWN_ARTIFACT_TOOL = /^(?:mcp__)?studio[-_]artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
-/** Swarm: AIB's helper tools (artifacts/mcp.ts SWARM_TOOLS); auto-approved like the artifact tools. */
-export const SWARM_TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper', 'unlanded_work'];
-/** Every studio_artifact tool name a request can carry, old and new (allow/own_tools.ts). Which of them need no card: isAutoApproved. */
-const OWN_TOOL_NAMES = ALL_OWN_NAMES;
-
-/**
- * The studio_artifact tool a permission request is for, by the adapter's own shape, or ''. Claude Code names it in
- * _meta.claudeCode.toolName (mcp__studio_artifact__<tool>); other adapters put the MCP server and tool in rawInput ({server, tool}, as
- * codex-acp's McpInvocation) or a title "Tool: studio_artifact/<tool>" (codex-acp) / "<tool> (studio_artifact MCP Server)" (Gemini CLI).
- * An agent-written title alone counts only for an MCP-shaped call: a command (kind execute) titled like the tool is not AIB's tool
- * (review break 4).
- */
-export function ownToolName(call: Json, mcp?: ToolSeen['mcp']): string {
-  const meta = isDict(call._meta) ? call._meta : {};
-  const claude = isDict(meta.claudeCode) ? meta.claudeCode : {};
-  const fromClaude = isStr(claude.toolName) ? claude.toolName : isStr(call.name) ? call.name : '';
-  const prefixed = (n: string) => {
-    const m = /^(?:mcp__)?studio[-_]artifact__([a-z_]+)\n?$/.exec(n); // Maki names it studio-artifact__<tool> (hyphen)
-    return m && OWN_TOOL_NAMES.has(m[1]) ? m[1] : '';
-  };
-  if (fromClaude) return prefixed(fromClaude);
-  const raw = isDict(call.rawInput) ? call.rawInput : {};
-  const invocation = isDict(raw.invocation) ? raw.invocation : raw;
-  if ((invocation.server === 'studio_artifact' || invocation.server === 'studio-artifact') && isStr(invocation.tool) && OWN_TOOL_NAMES.has(invocation.tool)) return invocation.tool;
-  // codex-acp 2.6.0, recorded from a real Codex run (work/test_tool_details.js CODEX_MCP_DOC_CREATE): kind 'execute', title
-  // "mcp.studio_artifact.<tool>", `_meta.is_mcp_tool_call`. Only with that mark: a shell command titled alike never has it.
-  if (meta.is_mcp_tool_call === true && isStr(call.title)) {
-    const recorded = /^mcp\.studio[-_]artifact\.([a-z_]+)$/.exec(call.title.trim());
-    if (recorded && OWN_TOOL_NAMES.has(recorded[1])) return recorded[1];
-  }
-  // codex-acp 2.6.0 permission request (recorded: work/deno/codex_acp_mcp_permission_shape.json): only {toolCallId, kind 'execute'} and
-  // _meta.is_mcp_tool_approval (on the request, not the toolCall). The tool is the one on the tool_call with the same toolCallId (`mcp`).
-  if (mcp && (mcp.server === 'studio_artifact' || mcp.server === 'studio-artifact')) {
-    return OWN_TOOL_NAMES.has(mcp.tool) ? mcp.tool : '';
-  }
-  if (call.kind === 'execute' || call.kind === 'edit' || call.kind === 'delete' || call.kind === 'move') return '';
-  const title = isStr(call.title) ? call.title.trim() : '';
-  const codex = /^Tool: studio[-_]artifact\/([a-z_]+)$/.exec(title);
-  if (codex && OWN_TOOL_NAMES.has(codex[1])) return codex[1];
-  const gemini = /^([a-z_]+) \(studio[-_]artifact MCP Server\)$/.exec(title);
-  if (gemini && OWN_TOOL_NAMES.has(gemini[1])) return gemini[1];
-  // Maki 0.7.2 (recorded from the real adapter): kind 'other', title "studio-artifact.<tool>: <the arguments as JSON>", no name, no _meta
-  const maki = /^studio[-_]artifact\.([a-z_]+)(?::|$)/.exec(title);
-  if (maki && OWN_TOOL_NAMES.has(maki[1])) return maki[1];
-  return prefixed(title);
-}
-
-/**
- * The tool + action of an AIB tool request (allow/own_tools.ts), or null. The action is the `action` field of the call's input, which AIB
- * reads from Claude's rawInput, from Codex's tool_call (`mcp`), and from Maki's rawInput. Gemini and unknown agents show none: action ''.
- */
-export function ownToolAction(call: Json, mcp?: ToolSeen['mcp']): ToolAction | null {
-  const name = ownToolName(call, mcp);
-  if (!name) return null;
-  const raw = isDict(call.rawInput) ? call.rawInput : {};
-  const args = isDict(raw.arguments) ? raw.arguments : raw;
-  const action = isStr(args.action) ? args.action : mcp?.action;
-  return canonicalTool(name, action);
-}
-
-/** {server, tool, action} of a Codex MCP tool_call's rawInput ({server, tool, arguments}), or null. */
-function mcpOf(raw: unknown): ToolSeen['mcp'] {
-  if (!isDict(raw) || !isStr(raw.server) || !isStr(raw.tool)) return null;
-  const args = isDict(raw.arguments) ? raw.arguments : {};
-  return { server: raw.server, tool: raw.tool, action: isStr(args.action) ? args.action.trim() : '' };
-}
-
-/**
- * GitHub Copilot CLI (1.0.109, run against a stub model): its tool_call for an MCP tool is titled `<server>-<tool>`, kind other, and
- * rawInput is the arguments themselves; its permission request carries only the tool's own name as title. So AIB's tool is known from
- * the tool_call, the way Codex's is (ToolSeen.mcp). Only AIB's own server (agents/copilot_mcp.ts); any other tool: null.
- */
-function copilotMcpOf(update: Json): ToolSeen['mcp'] {
-  const title = get(update, 'title');
-  const named = isStr(title) ? splitCopilotToolName(title.trim()) : null;
-  if (!named) return null;
-  const raw = get(update, 'rawInput');
-  const args = isDict(raw) ? raw : {};
-  return { server: named.server, tool: named.tool, action: isStr(args.action) ? args.action.trim() : '' };
-}
-
-/** The `_claude/origin` kinds of a cycle Claude Code started on its own (claude-agent-acp's AUTONOMOUS_RESULT_ORIGINS). */
-const AUTONOMOUS_ORIGINS = new Set(['task-notification', 'peer', 'coordinator', 'observer', 'observer-activity']);
-
-/** What #untilReplyEnds races the response against. */
-const HELD = Symbol('held');
-
-const PROMPT_UNKNOWN = 'This message was being sent when AIB stopped, so AIB cannot tell whether the agent received it. ' +
-  'Check the conversation. If it is missing, press Send again.';
-
-// ---- steer-on-send (messages sent while the agent works) -------------------------------------------------------------------------
-
-/** The agents whose steering behaviour AIB knows (the page picks its hint copy by this); any other agent that steers gets the fallback. */
-export const STEER_AGENTS: ReadonlySet<string> = new Set(['claude', 'codex']);
-/** A request's failure as an RpcError (request() throws a RuntimeError carrying the agent's code and data), or null. */
-function asRpcError(error: unknown): RpcError | null {
-  if (error instanceof RpcError) return error;
-  if (!(error instanceof Error) || !Object.hasOwn(error, 'code')) return null;
-  const { code, data } = error as Error & { code?: unknown; data?: unknown };
-  return new RpcError({ message: error.message, code, data });
-}
-/** Built-in agents whose ACP terminal sign-in methods AIB runs itself, in an AIB terminal (Deno only). */
-export const TERMINAL_SIGNIN_PROVIDERS: ReadonlySet<string> = new Set(['claude']);
-
-/**
- * How long a Claude Code turn whose reply ended while its helpers run waits before it is ended early, when a steered message went in
- * during the turn: the steer may get its own model cycle, whose output comes a moment after the first cycle's result (recording C4).
- * Any main-session output in that time cancels the early end. Tests lower it.
- */
-export const steerTiming = { settleMs: 3000, steerTimeoutSeconds: 30, steerLateSeconds: 300 };
-
-/** An agent's refusal of a prompt while it still works ("Agent is already processing. Use steer() or followUp()..."). Any agent may say it. */
-export function isAgentBusyError(error: unknown): boolean {
-  return /already processing/i.test(errorText(error));
-}
-/** How a prompt that met a busy agent (isAgentBusyError) is tried again: every delayMs, for at most maxSeconds. Tests lower it. */
-export const busyRetry = { delayMs: 1000, maxSeconds: 1800 };
-
-/** The note on a queued message a steer could not deliver (the agent refused it or did not answer). */
-export const STEER_FAILED_NOTE = "Couldn't send now: sends when this turn ends.";
-/** Codex may drop a steer that lands as its turn ends (codex-acp v1 turn/completed): no reply after it means it was probably lost. */
-export const CODEX_UNREAD_NOTE = "Codex may not have read this: it ended its turn without answering it. Press Resume to send it again, or remove it.";
-
-/**
- * Background-command phrases in a tool result (B6). Claude Code: its run_in_background, and the moves of a running command (a steer,
- * its timeout, Ctrl+B). The id is the task id. They are read from the result's start only (a command that printed this would have
- * to print it first).
- */
-const CLAUDE_BACKGROUND_TEXT = [
-  /^Command running in background with ID: (\S+?)\.(?:\s|$)/,
-  /^Command was moved to the background \(ID: ([^)\s]+)\)/,
-  /^[^\n]*?timeout and was moved to the background \(ID: ([^)\s]+)\)/,
-  /^[^\n]*?manually backgrounded by user with ID: ([^\s.]+)/,
-];
-
-/**
- * A tool result's background task id, from the agent's own signal: Claude Code's meta (toolResponse.backgroundTaskId, with
- * backgroundedToDeliverMessage for a steer) or its result text. Any other agent: none. (A Codex command that outlives its turn is
- * found at the turn's end instead.)
- */
-/** The main agent's tools whose calls say a subagent started, continued or was stopped (subagent worktrees P2). */
-const CLAUDE_SUBAGENT_TOOLS = new Set(['Agent', 'Task', 'SendMessage', 'TaskStop', 'KillShell']);
-
-export function backgroundTask(update: Json, claude: boolean): string | null {
-  if (!claude) return null;
-  const meta = get(update, '_meta');
-  const code = isDict(meta) ? get(meta, 'claudeCode') : null;
-  const response = isDict(code) ? get(code, 'toolResponse') : null;
-  const task = isDict(response) ? get(response, 'backgroundTaskId') : null;
-  if (isStr(task) && task) return task;
-  const raw = get(update, 'rawOutput');
-  const text = (isStr(raw) ? raw : '').replace(/^\s+/, '');
-  for (const pattern of CLAUDE_BACKGROUND_TEXT) {
-    const m = pattern.exec(text);
-    if (m) return m[1];
-  }
-  return null;
-}
-
-/** A tool update that says the tool is over (completed / failed) and does not say it keeps running in the background. */
-function toolEnded(update: Json, claude: boolean): boolean {
-  const status = get(update, 'status');
-  if (status !== 'completed' && status !== 'failed') return false;
-  return backgroundTask(update, claude) === null;
-}
-
-/** A tool AIB has seen in this chat: whether it is a shell command, its last status, when it began, which prompt turn it was in. */
-interface ToolSeen {
-  shell: boolean;
-  /** An edit-style call (ACP kind edit / delete / move): Claude Write and Edit, Codex apply_patch, Gemini write_file and replace. */
-  edit?: boolean;
-  /** Claude Code's tool name (Bash, PowerShell, Edit, mcp__x__y), or null: allow rules pick the shell parser by it. */
-  toolName?: string | null;
-  status: string;
-  since: number;
-  main: boolean;
-  turn: number;
-  /** The call's title (a shell command's text), for the row of a message waiting for it. */
-  title?: string;
-  /** Claude Code: the Agent call this one runs under (_meta.claudeCode.parentToolUseId), or null for the main agent's own. */
-  parent?: string | null;
-  /** An MCP call (Codex: the tool_call's rawInput {server, tool, arguments}); its permission request names none of it. */
-  mcp?: { server: string; tool: string; action: string } | null;
-  /**
-   * A subagent's call: the tool_call lives in the subagent's own session, but AIB's background notes go to the main session (the page
-   * draws them as rows of their own there). This is what the call was, so such a row is titled by its command and not by `toolu_...`.
-   */
-  echo?: Json | null;
-}
-
-/** What a tool call was (title, kind, input, tool name), to repeat on a row that would otherwise carry only its id. */
-function toolEcho(update: Json): Json | null {
-  const out: Json = {};
-  for (const key of ['title', 'kind', 'rawInput', 'name']) {
-    const value = get(update, key);
-    if (value !== undefined && value !== null) out[key] = value;
-  }
-  const meta = get(update, '_meta');
-  const code = isDict(meta) ? get(meta, 'claudeCode') : null;
-  if (isDict(code)) {
-    const keep: Json = {};
-    for (const key of ['toolName', 'parentToolUseId']) if (get(code, key) !== undefined) keep[key] = get(code, key);
-    out._meta = { claudeCode: keep };
-  }
-  return Object.keys(out).length ? out : null;
-}
-
-/** A tool call that moved to the background (any of the three signals): what the page shows and what Stop may kill. */
-interface BackgroundTool {
-  /** The #bgShells key (Claude's task id, OMP's job id, or `open:<toolCallId>` for a Codex command that outlived its turn). */
-  task: string;
-  state: 'running' | 'done' | 'stopped';
-  /** The processes that started with the command, by (pid, start time); null when they cannot be told apart from others. */
-  procs: ProcId[] | null;
-  stoppable: boolean;
-  since: number;
-  at: number;
-  endedAt: number | null;
-  /**
-   * A Claude Code helper (its child session id) rather than a command: marked from the adapter's own "Async agent launched" reply,
-   * done when its subagent_update leaves running. Never stoppable: it runs inside the agent's own process, so there is no process
-   * of its own (pid and start time) AIB could verify and kill.
-   */
-  helper?: string;
-}
-
-/** The adapter's reply when a helper went on in the background (claude-agent-acp 0.97, recording C2: `<toolUseId>:reply`). */
-const HELPER_BACKGROUND_TEXT = /^\s*Async agent launched successfully/;
-
-/** Stop on a background row was refused (HTTP 409): not stoppable, not running, or the processes cannot be verified. */
-export class NotStoppable extends Error {
-  override name = 'NotStoppable';
-}
-
-/** str(a) for each item of `e.get('args') or []` (a string iterates its characters). */
-function argStrings(args: unknown): string[] {
-  if (!pyTruthy(args)) return [];
-  if (Array.isArray(args)) return args.map((a) => pyStr(a));
-  if (isStr(args)) return [...args];
-  if (isDict(args)) return Object.keys(args);
-  throw new TypeError(`'${pyTypeName(args)}' object is not iterable`);
-}
-
-/**
- * True for the `studio_artifact` entry AIB itself gave the chat: the Deno tool (artifacts/mcp.ts: this program with the
- * mcp-artifact subcommand) or the HTTP one this process serves (artifacts/mcp_http.ts). The Deno host builds every chat's entries
- * itself, so no other tool entry needs recognising.
- */
-export function isOwnArtifactEntry(entry: unknown): boolean {
-  if (!isDict(entry) || entry.name !== 'studio_artifact') return false;
-  if (entry.type === 'http') return isOwnMcpUrl(entry.url);
-  const args = argStrings(get(entry, 'args'));
-  if (isOwnForwardEntry(entry.command, args)) return true; // the keeper's forwarder to this AIB's HTTP tool
-  const own = artifactToolCommand();
-  return entry.command === own.command && args.length === own.args.length && args.every((a, i) => a === own.args[i]);
-}
-
-/**
- * How a child the adapter announced has ended (subagent worktrees P3), from its tracked subagent_update state: null while it runs (or
- * was never said); else 'end_turn' (finished), 'cancelled', 'error', '' (idle with no reason: unexplained or a worker restart) or
- * 'unknown' (the adapter lost sight of it).
- */
-export function subagentEnd(entry: Json | undefined): string | null {
-  const state = entry && isStr(entry.state) ? entry.state.toLowerCase() : '';
-  if (state === 'idle') return isStr(entry!.stopReason) ? entry!.stopReason : '';
-  if (state === 'completed' || state === 'complete') return 'end_turn';
-  if (state === 'failed' || state === 'error') return 'error';
-  if (state === 'cancelled' || state === 'canceled') return 'cancelled';
-  if (state === 'unknown') return 'unknown';
-  return null;
-}
-
-/** The most of a session/load replay a ReplayWindow holds, in JSON bytes (besides MAX_EVENTS updates). */
-export const REPLAY_WINDOW_BYTES = 32 * 1024 * 1024;
-
-/**
- * A session/load replay held while it arrives (a reopened chat, or one taken back after a hand-off: only the outside turns at its
- * END are shown, outsideTurns): its NEWEST updates, at most `max` of them and `maxBytes` of JSON, the oldest dropped first, so
- * memory stays bounded whatever the transcript's length. Until 0.12.1 the OLDEST MAX_EVENTS were kept: the end of a long transcript
- * was lost, a generic last message ("[Request interrupted by user]") matched an old turn, and every later turn of the first 6000
- * updates came back as "from outside AIB" (24 old turns in the owner's WSL chat, 2026-11-17).
- */
-export class ReplayWindow {
-  #items: (Json | null)[] = [];
-  #sizes: number[] = [];
-  #head = 0;
-  #bytes = 0;
-  /** Updates received, and dropped (the oldest, over the bounds). */
-  received = 0;
-  dropped = 0;
-  constructor(readonly max = MAX_EVENTS, readonly maxBytes = REPLAY_WINDOW_BYTES) {}
-
-  push(params: Json): void {
-    let size = 0;
-    try {
-      size = JSON.stringify(params)?.length ?? 0;
-    } catch { /* not JSON: counted as nothing */ }
-    this.#items.push(params);
-    this.#sizes.push(size);
-    this.#bytes += size;
-    this.received += 1;
-    while (this.length > 1 && (this.length > this.max || this.#bytes > this.maxBytes)) {
-      this.#bytes -= this.#sizes[this.#head];
-      this.#items[this.#head] = null;
-      this.#head += 1;
-      this.dropped += 1;
-    }
-    if (this.#head > 4096 && this.#head * 2 > this.#items.length) { // drop the dead front now and then (no O(n) shift per update)
-      this.#items = this.#items.slice(this.#head);
-      this.#sizes = this.#sizes.slice(this.#head);
-      this.#head = 0;
-    }
-  }
-
-  get length(): number {
-    return this.#items.length - this.#head;
-  }
-
-  /** The updates held, oldest first. */
-  get updates(): Json[] {
-    return this.#items.slice(this.#head) as Json[];
-  }
-}
-
-/**
- * Open elsewhere: of the history a session/load sends back (session/update params, oldest first), the turns that came after the
- * last user message this chat already showed (`lastUserText`), so only what was written in another app is shown again. A turn
- * starts at a user message (consecutive user_message_chunk updates). The last turn whose user text contains `lastUserText` is
- * this chat's own; everything after it is outside. `lastUserText` empty (the chat never showed a user message): every turn is
- * outside. Not found: nothing (AIB shows no history twice; the agent still has it all).
- */
-export function outsideTurns(updates: Json[], lastUserText: string): { updates: Json[]; turns: number } {
-  const turns: { text: string; updates: Json[] }[] = [];
-  let inUser = false;
-  for (const params of updates) {
-    const update = isDict(params) ? get(params, 'update', {}) as Json : {};
-    const kind = isDict(update) ? get(update, 'sessionUpdate') : null;
-    if (kind === 'user_message_chunk') {
-      if (!inUser || !turns.length) turns.push({ text: '', updates: [] });
-      inUser = true;
-      const content = get(update, 'content', {}) as Json;
-      if (isDict(content) && content.type === 'text' && isStr(content.text)) turns.at(-1)!.text += content.text;
-    } else {
-      inUser = false;
-      if (!turns.length) turns.push({ text: '', updates: [] }); // something before the first user message: part of what AIB had
-    }
-    turns.at(-1)!.updates.push(params);
-  }
-  const want = pyStrip(lastUserText);
-  let from = 0;
-  if (want) {
-    let mine = -1;
-    for (let i = turns.length - 1; i >= 0; i--) {
-      if (turns[i].text.includes(want)) {
-        mine = i;
-        break;
-      }
-    }
-    if (mine < 0) return { updates: [], turns: 0 };
-    from = mine + 1;
-  } else if (turns.length && !turns[0].text) from = 1;
-  const outside = turns.slice(from).filter((t) => t.text);
-  return { updates: outside.flatMap((t) => t.updates), turns: outside.length };
-}
-
-/** S3's quiet time (inbox-rules.js QUIET_SECONDS); test runs (AGENT_STUDIO_TEST=1) may shorten it with AIB_TEST_QUIET_SECONDS. */
-let quietCache: number | null = null;
-function quietSeconds(): number {
-  if (quietCache !== null) return quietCache;
-  let v = INBOX.QUIET_SECONDS;
-  try {
-    const test = Deno.env.get('AGENT_STUDIO_TEST') === '1' ? Number(Deno.env.get('AIB_TEST_QUIET_SECONDS')) : NaN;
-    if (Number.isFinite(test) && test > 0) v = test;
-  } catch { /* no env access */ }
-  return (quietCache = v);
-}
-
-/** The follow-up window after a helper or shell ends (inbox-rules.js FOLLOW_UP_SECONDS, 20 s); test runs (AGENT_STUDIO_TEST=1) may shorten it with AIB_TEST_FOLLOW_UP_SECONDS. */
-let followCache: number | null = null;
-function followUpSeconds(): number {
-  if (followCache !== null) return followCache;
-  let v = INBOX.FOLLOW_UP_SECONDS;
-  try {
-    const test = Deno.env.get('AGENT_STUDIO_TEST') === '1' ? Number(Deno.env.get('AIB_TEST_FOLLOW_UP_SECONDS')) : NaN;
-    if (Number.isFinite(test) && test > 0) v = test;
-  } catch { /* no env access */ }
-  return (followCache = v);
-}
 
 export class Connection {
   readonly id: string;
@@ -1308,73 +221,73 @@ export class Connection {
   turnFailedAt: number | null = null;
   turnError = '';
   /** The last reply asks you something in plain text (inbox-rules.js asksOf, rule R6): when it ended, and the question. */
-  #asks: { at: number; question: string } | null = null;
+  $asks: { at: number; question: string } | null = null;
   /**
    * Inbox v3.1 stalled: the agent stopped mid-work without saying it was done. 'died': its output ended (it exited, the pipe broke,
    * the keeper lost it) while a turn ran and nobody pressed Stop or closed the chat (S1). 'silent_end': the turn ended normally but
    * no main-agent text came after its last tool call (S2). When, the kind and the last step (the last main tool call's title).
    * Cleared when the next turn starts. The third signal, gone quiet (S3), is read live in attention() from lastOutputAt.
    */
-  #stall: { at: number; kind: string; step: string } | null = null;
+  $stall: { at: number; kind: string; step: string } | null = null;
   /** When the agent last sent anything on its stream (seconds): S3 "gone quiet". */
-  #lastOutputAt: number | null = null;
+  $lastOutputAt: number | null = null;
   /** The title of the main agent's last tool call (the stalled row's "during npm test"). */
-  #lastStep = '';
+  $lastStep = '';
   /** When each live helper was first seen running, and each background shell started (seconds): the inbox's caps. */
-  #helperSince = new Map<string, number>();
-  #shellSince = new Map<string, number>();
+  $helperSince = new Map<string, number>();
+  $shellSince = new Map<string, number>();
   /** When the chat's last helper or background shell ended (seconds): the agent's own follow-up usually starts within 20 s. */
-  #workEndedAt: number | null = null;
+  $workEndedAt: number | null = null;
   /** Helpers or shells counted as work at the last look (a shell's end is read from the OS, so it is noticed by looking). */
   #hadWork = false;
   /** The background-shell answer of the last look, at most 2 s old (a process listing per call is too slow for every list). */
-  #shellsSeen: { at: number; running: boolean } | null = null;
+  $shellsSeen: { at: number; running: boolean } | null = null;
   /**
    * True while `busy` stands for a model cycle Claude Code started on its own (a background helper finished and it answers the
-   * task notification), not for a prompt of ours. Ends at that cycle's result (see #watchHeldTurn).
+   * task notification), not for a prompt of ours. Ends at that cycle's result (see $watchHeldTurn).
    */
   autonomous = false;
   /** The running prompt's early end: called when its reply ended but Claude Code holds the response for background helpers. */
-  #endEarly: { seq: number; fire: () => void } | null = null;
+  $endEarly: { seq: number; fire: () => void } | null = null;
   /** Subagent sessions that started (or resumed) running during the current prompt turn: the helpers Claude Code holds it for. */
-  #turnHelpers = new Set<string>();
+  $turnHelpers = new Set<string>();
   /** Claude Code subagent sessions seen running (or waiting for the user) live and not yet ended, whichever turn started them. */
-  #liveHelpers = new Set<string>();
+  $liveHelpers = new Set<string>();
   /**
    * Claude Code background shells (Bash or PowerShell with run_in_background) seen started and not seen ended: task id -> the pids of
    * the agent's processes that started with the command (null when they could not be listed: the shell then counts until a
    * task-notification cycle). See backgroundShellsRunning.
    */
-  #bgShells = new Map<string, number[] | null>();
+  $bgShells = new Map<string, number[] | null>();
   /** Bash/PowerShell tool calls of this chat -> when their tool_call came (seconds): a background shell started after it. */
-  #shellCalls = new Map<string, number>();
+  $shellCalls = new Map<string, number>();
   /** The agent's processes when the current prompt turn began: none of them is a shell that turn starts. */
-  #turnProcesses: Set<number> | null = null;
+  $turnProcesses: Set<number> | null = null;
   /** Tool calls seen (any agent, any session): shell or not, last status, start, turn. At most 300, oldest dropped. */
-  #tools = new Map<string, ToolSeen>();
+  $tools = new Map<string, ToolSeen>();
   /** Tool calls that moved to the background, by toolCallId (snapshot `toolBackground`; Stop). */
-  #bgTools = new Map<string, BackgroundTool>();
+  $bgTools = new Map<string, BackgroundTool>();
   /** Steers of the current prompt turn: how many went in, whether main-session output came after the last, which may be unread. */
-  #steerTurn: { injected: number; outputAfter: boolean; unread: SteerItem[] } = { injected: 0, outputAfter: false, unread: [] };
+  $steerTurn: { injected: number; outputAfter: boolean; unread: SteerItem[] } = { injected: 0, outputAfter: false, unread: [] };
   /** The pending early end of a held turn after a steer (see steerTiming.settleMs). */
-  #settleTimer: ReturnType<typeof setTimeout> | null = null;
+  $settleTimer: ReturnType<typeof setTimeout> | null = null;
   /** Set once the running prompt's session/prompt was written: a steer before it would find no turn (promptRequired). */
-  #promptOut = new ThreadEvent();
+  $promptOut = new ThreadEvent();
   /** The steer lane's pump (one at a time) and whether it must look again when it finishes. */
-  #steerRun: Promise<void> | null = null;
-  #steerAgain = false;
+  $steerRun: Promise<void> | null = null;
+  $steerAgain = false;
   /** The steer request in flight (cancel() leaves it in the lane; its answer decides). */
-  #steerInflight: SteerItem | null = null;
+  $steerInflight: SteerItem | null = null;
   /** Rebuilt from the keeper: the answer to each steer the old AIB sent, by message id (the lane waits for it instead of resending). */
-  #replayedSteers = new Map<string, Promise<string>>();
+  $replayedSteers = new Map<string, Promise<string>>();
   /** steer notes by JSON-RPC id of the _session/steering they announce (a rebuild shows the message and applies the answer). */
-  #steerNotes = new Map<string, Json>();
+  $steerNotes = new Map<string, Json>();
   /**
    * Steers whose answer did not come within steerTiming.steerTimeoutSeconds, by message id: the message waits in the after-turn
    * queue, but is not sent from there until the late answer says the agent did not take it (or steerLateSeconds pass), so a steer
    * the agent took late is never sent a second time as a prompt.
    */
-  #steerLate = new Set<string>();
+  $steerLate = new Set<string>();
   closed = false;
   initial: unknown = {};
   imageSupported = false;
@@ -1426,7 +339,7 @@ export class Connection {
   ownRuns: ((c: Connection) => number) | null = null;
   /** Gemini: the main session's invoke_agent tool calls (a subagent starts and ends), from the stream the agent can't forge. */
   onGeminiTool: ((c: Connection, toolCallId: string, title: string, status: string) => void) | null = null;
-  #geminiCalls = new Set<string>();
+  $geminiCalls = new Set<string>();
   /**
    * Claude Code: the adapter said one of the main agent's subagents ended (subagent_update of child `agentId`, the RFD form: state
    * idle with stopReason end_turn / cancelled / error, none, or unknown). The child's session id IS its agentId (claude-agent-acp
@@ -1499,40 +412,40 @@ export class Connection {
   rebuilt: Promise<void> | null = null;
   /** Why this chat could not be rebuilt from the keeper's record ('' when it was, or was never rebuilt). It is then read-only. */
   rebuildError = '';
-  #replaying = false;
+  $replaying = false;
   /** AIB's own lines of this conversation, kept by provider + session (history/lines.ts); set by AIB. */
   lines: ConversationLines | null = null;
   /** While a session/load replays the transcript (live only): puts the kept lines back after their turns. */
-  #merger: LineMerger | null = null;
+  $merger: LineMerger | null = null;
   /** The replayed user message being read (its text so far), or null between messages. */
   #mergeUserText: string | null = null;
   /** The anchor of the last replayed user message that ended (its turn's lines come before the next one). */
   #mergeAnchor = '';
   /** The raw text and attachments of the latest prompt, so a turn that failed for sign-in can be sent again once (Deno only). */
-  #lastPrompt: { seq: number; text: unknown; attachments: unknown } | null = null;
+  $lastPrompt: { seq: number; text: unknown; attachments: unknown } | null = null;
   /** The message to send again after a mid-session sign-in, or null. */
-  #authRetry: { text: unknown; attachments: unknown } | null = null;
+  $authRetry: { text: unknown; attachments: unknown } | null = null;
   /** True while the automatic resend after a sign-in is running: another auth failure then says the sign-in did not take. */
-  #authResent = false;
+  $authResent = false;
   /** Record time (seconds) while replaying, so rebuilt events keep their original times. */
-  #clock: number | null = null;
-  #outLines = new PyTextLines();
-  #errLines = new PyTextLines();
-  #records: Promise<void> = Promise.resolve();
+  $clock: number | null = null;
+  $outLines = new PyTextLines();
+  $errLines = new PyTextLines();
+  $records: Promise<void> = Promise.resolve();
   /** Writes held back while replaying: those the record shows were made are dropped, the rest go out once live. */
-  #held: { message: Json; once?: string }[] = [];
+  $held: { message: Json; once?: string }[] = [];
   /** receipt notes by JSON-RPC id of the prompt they announce. */
-  #receiptNotes = new Map<string, Json>();
+  $receiptNotes = new Map<string, Json>();
   /** fsWrite / clientTerminal notes by the agent request id they are about. */
-  #sideNotes = new Map<string, Json>();
+  $sideNotes = new Map<string, Json>();
   /** Client terminals the record says were released (their `clientTerminalReleased` notes). */
-  #releasedTerminals = new Set<string>();
-  #terminalProblemLogged = false;
+  $releasedTerminals = new Set<string>();
+  $terminalProblemLogged = false;
   /** Agent -> client capability requests met while replaying (answered once live, unless the record shows the answer). */
-  #deferred: Json[] = [];
-  #exitResolve: (() => void) | null = null;
+  $deferred: Json[] = [];
+  $exitResolve: (() => void) | null = null;
   /** How often each agent request id was seen (rebuilt identically by a replay): part of an answer's once-key. */
-  #requestsSeen = new Map<string, number>();
+  $requestsSeen = new Map<string, number>();
   /**
    * The id of this chat's event numbering, sent with every state (eventsId): a page whose events came from another numbering starts
    * its list again. A chat rebuilt from the keeper keeps the id when its record gives the same numbering (a snapshot, or a record
@@ -1540,22 +453,22 @@ export class Connection {
    */
   eventsId = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
   /** The last keeper record handled (a snapshot says how far it reaches). */
-  #lastSeq = 0;
+  $lastSeq = 0;
   /** While replaying: records since the newest snapshot (or the start), handled once the replay has caught up. */
-  #replayBuffer: KeeperRecord[] = [];
+  $replayBuffer: KeeperRecord[] = [];
   /** While replaying: the newest snapshot note met and its seq. */
-  #replaySnapshot: { note: Json; seq: number } | null = null;
+  $replaySnapshot: { note: Json; seq: number } | null = null;
   /** While replaying: records before this seq were truncated away (0: none). */
-  #replayGapNext = 0;
+  $replayGapNext = 0;
   /** The keeper sent `live`: records from here on are handled as they come. */
-  #replayLive = false;
-  #snapshotQueued = false;
+  $replayLive = false;
+  $snapshotQueued = false;
   /** The newest event seq already stored in the journal by a snapshot (in its note or a chunk note before it). */
-  #eventsSaved = 0;
+  $eventsSaved = 0;
   /** The journal notes that hold stored events: [record seq, last event seq], oldest first (truncate keeps what the history needs). */
-  #eventChunks: [number, number][] = [];
+  $eventChunks: [number, number][] = [];
   /** While replaying: the stored event chunks met, by record seq. */
-  #replayChunks = new Map<number, Json[]>();
+  $replayChunks = new Map<number, Json[]>();
   /** Snapshots written and journal truncations asked for (tests). */
   snapshots = 0;
   /** The size in bytes of the last snapshot note written, and of the chunk notes written with it (tests, logs). */
@@ -1567,24 +480,24 @@ export class Connection {
   /** performance.now() at the take-over's steps (aib.ts logs each chat's take-over timing from them); 0: not reached. */
   rebuildTimes = { adopt: 0, live: 0, replayed: 0, settled: 0 };
   // ---- the history store (design 3.1-3.5) ----
-  #history: HistoryClient | null = null;
+  $history: HistoryClient | null = null;
   /** off: no store; open: opened, not yet ours (a take-over before claim); claimed: written; dead: fenced, full or failed. */
   historyState: 'off' | 'open' | 'claimed' | 'dead' = 'off';
-  #historyQueue: Json[] = [];
-  #historyTimer: ReturnType<typeof setTimeout> | null = null;
-  #historyChain: Promise<unknown> = Promise.resolve();
-  #historyOpening: Promise<unknown> = Promise.resolve();
-  #historyOpened: OpenInfo | null = null;
+  $historyQueue: Json[] = [];
+  $historyTimer: ReturnType<typeof setTimeout> | null = null;
+  $historyChain: Promise<unknown> = Promise.resolve();
+  $historyOpening: Promise<unknown> = Promise.resolve();
+  $historyOpened: OpenInfo | null = null;
   /** The store's checkpoint this chat last committed or started from. */
   historyCkpt: Checkpoint | null = null;
   /** The newest seq committed to the store (written_seq). */
   historyWrittenSeq = 0;
   /** A take-over: the store's checkpoint as the snapshot the replay starts from (kept across a gap; newer keeper notes win). */
-  #storeSnapshot: { note: Json; seq: number } | null = null;
+  $storeSnapshot: { note: Json; seq: number } | null = null;
   /** A take-over: events up to here came from the store (the rest were rebuilt and are appended). */
-  #storeTrusted = 0;
+  $storeTrusted = 0;
   /** A take-over: the store is not this numbering's (another eventsId): it is started again from the rebuilt events. */
-  #storeReset = false;
+  $storeReset = false;
   /** A take-over: the record the keeper was attached from (ckpt.record + 1, or 0). */
   attachedFrom = 0;
   /** Tests: stop the next checkpoint right after this step (a crash there). */
@@ -1594,20 +507,20 @@ export class Connection {
   /** The removal of this chat's ended keeper channel (a reopen under the same id waits for it before it spawns `chat-<id>` again). */
   channelRemoved: Promise<void> = Promise.resolve();
   /** A reopened chat: the store's checkpoint for the new channel (its state before the channel's first record), claimed with it. */
-  #continueCkpt: Checkpoint | null = null;
+  $continueCkpt: Checkpoint | null = null;
   /** A reopened chat until its setup session/load ends: what the agent replays is in the store already (only outside turns are new). */
-  #continued = false;
+  $continued = false;
   traceback = '';
   exitCode: number | null = null;
-  #stdin: WritableStreamDefaultWriter<Uint8Array> | null = null;
-  #stdinBroken = false;
-  #stdinClosed = false;
-  #readTask: Promise<void> | null = null;
-  #stdoutReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-  #stderrReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-  #errorTask: Promise<void> | null = null;
-  #exited: Promise<void> | null = null;
-  #closing = false;
+  $stdin: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  $stdinBroken = false;
+  $stdinClosed = false;
+  $readTask: Promise<void> | null = null;
+  $stdoutReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  $stderrReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  $errorTask: Promise<void> | null = null;
+  $exited: Promise<void> | null = null;
+  $closing = false;
   /** The running turn's task (tests and close() can await it). */
   turn: Promise<void> | null = null;
 
@@ -1649,18 +562,18 @@ export class Connection {
         (message) => this.write(message),
       );
     // In the keeper, the agent's client terminals run there too (note first), so they outlive an AIB restart with the chat.
-    if (this.keeper && this.caps instanceof ClientCaps) this.caps.terminalBackend = this.#terminalBackend();
+    if (this.keeper && this.caps instanceof ClientCaps) this.caps.terminalBackend = this.$terminalBackend();
     // command is always a list (never a shell string).
     this.command = command;
     this.env = options.env ?? null;
     if (this.keeper && options.history) {
-      this.#history = options.history;
+      this.$history = options.history;
       this.historyState = 'open';
-      if (options.continueStore && !options.rebuild) this.#continueFrom(options.continueStore);
+      if (options.continueStore && !options.rebuild) this.$continueFrom(options.continueStore);
     }
-    if (options.rebuild && this.keeper) this.#adoptChannel(options.rebuild);
+    if (options.rebuild && this.keeper) this.$adoptChannel(options.rebuild);
     else {
-      if (this.#history) this.#historyOpening = this.#historyOpenNew();
+      if (this.$history) this.$historyOpening = this.$historyOpenNew();
       if (options.start ?? true) this.startProcess();
     }
   }
@@ -1701,7 +614,7 @@ export class Connection {
   }
 
   /** What session/new, session/load and session/resume list as `mcpServers`: nothing when the servers are in CODEX_CONFIG. */
-  #acpMcp(servers: McpServer[]): McpServer[] {
+  $acpMcp(servers: McpServer[]): McpServer[] {
     return this.mcpInConfig() ? [] : servers;
   }
 
@@ -1745,12 +658,12 @@ export class Connection {
     }).spawn();
     this.process = child;
     this.tree = new ProcessTree(child);
-    this.#stdin = child.stdin.getWriter();
-    this.#exited = child.status.then((status) => {
+    this.$stdin = child.stdin.getWriter();
+    this.$exited = child.status.then((status) => {
       this.exitCode = status.code;
     }, () => {});
-    this.#readTask = this.#read(child.stdout);
-    this.#errorTask = this.#readErrors(child.stderr);
+    this.$readTask = this.$read(child.stdout);
+    this.$errorTask = this.$readErrors(child.stderr);
   }
 
   // ---- the agent in the keeper ----------------------------------------------------------------------------------------------
@@ -1762,10 +675,10 @@ export class Connection {
     guardRealAgentAuth(this.provider, this.command, env, {});
     const channel = this.keeper!.spawn(
       { channel: `chat-${this.id}`, command: resolveProgram(program, env), args, cwd: this.cwd, env },
-      this.#keeperListener(),
-      () => this.#chatNote(),
+      this.$keeperListener(),
+      () => this.$chatNote(),
     );
-    this.#useChannel(channel);
+    this.$useChannel(channel);
   }
 
   /**
@@ -1782,1377 +695,54 @@ export class Connection {
     if (!wslFixture) guardRealAgentAuth(this.provider, this.command, env, {});
     const channel = this.keeper!.spawn(
       { channel: `chat-${this.id}`, command: wsl.program || program, args, cwd: this.agentCwd, env },
-      this.#keeperListener(),
-      () => this.#chatNote(),
+      this.$keeperListener(),
+      () => this.$chatNote(),
     );
-    this.#useChannel(channel);
+    this.$useChannel(channel);
   }
 
-  /** Rebuild from a live keeper channel an earlier AIB started: replay its record, then claim it and go on live. */
-  #adoptChannel(info: ChannelInfo): void {
-    this.#replaying = true;
-    let settle: [() => void, (error: Error) => void] = [() => {}, () => {}];
-    this.rebuilt = new Promise<void>((resolve, reject) => (settle = [resolve, reject]));
-    this.rebuilt.catch(() => {});
-    this.#settleRebuild = settle;
-    this.rebuildTimes.adopt = performance.now();
-    const from = this.#history ? () => this.#historyAdoptFrom(info) : 0;
-    this.#useChannel(this.keeper!.adopt(info, this.#keeperListener(), from));
-  }
-
-  #settleRebuild: [() => void, (error: Error) => void] | null = null;
-  #endedResolve: (() => void) | null = null;
-  #ended = false;
+  $settleRebuild: [() => void, (error: Error) => void] | null = null;
+  $endedResolve: (() => void) | null = null;
+  $ended = false;
   /** True when the keeper itself went away under this chat (the agent ended with it). */
   interrupted = false;
-
-  #useChannel(channel: KeeperChannel): void {
-    this.channel = channel;
-    const kill = () => void channel.kill();
-    const standIn: Killable = {
-      get pid() {
-        return channel.pid;
-      },
-      kill,
-    };
-    this.process = standIn as Deno.ChildProcess;
-    this.tree = { kill };
-    this.#exited = new Promise<void>((resolve) => (this.#exitResolve = resolve));
-    this.#readTask = new Promise<void>((resolve) => (this.#endedResolve = resolve));
-    this.#errorTask = Promise.resolve();
-  }
-
-  #hooksNote(): Json {
-    const h = this.subagentHooks!;
-    return {
-      given: isDict(h.settings?.hooks) || h.adopted === true,
-      off: h.off,
-      ...(h.detail ? { detail: h.detail } : {}),
-      readOnly: h.readOnly,
-      userWorktreeHook: h.userWorktreeHook,
-      ...(h.configDir ? { configDir: h.configDir } : {}),
-      ...(h.deny ? { deny: h.deny } : {}), // the editing-subagent deny rules a reopen must send again
-      ...(h.prompt ? { prompt: h.prompt } : {}),
-      ...(h.shellTag ? { shellTag: true } : {}),
-      ...(h.agyDir ? { agyDir: h.agyDir } : {}),
-    };
-  }
-
-  /** The `chat` note: written right after the spawn, so a later AIB knows what this channel is. */
-  #chatNote(): Json {
-    return {
-      t: 'chat',
-      id: this.id,
-      provider: this.provider,
-      cwd: this.cwd,
-      // which keeper holds it: a WSL chat's note says its distro, so a rebuild looks for it in that distro's keeper
-      loc: this.wsl ? { kind: 'wsl', distro: this.wsl.distro, linuxPath: this.wsl.linuxPath } : { kind: 'win' },
-      projectRoot: this.projectRoot,
-      worktree: this.worktree,
-      resume: this.sessionId,
-      command: this.command,
-      mcpServers: this.mcpServers,
-      app: APP_VERSION,
-      // subagent worktrees: whether its agent runs AIB's hooks, or why not, so a take-over shows the same (should-fix 6). No key.
-      ...(this.subagentHooks ? { subagentHooks: this.#hooksNote() } : {}),
-      // Every event of this chat is rebuilt from this record (AIB's own events go in as `event` notes), so a rebuild numbers
-      // them exactly as now and an open page keeps its cursor.
-      ev: 1,
-      // a reopened chat that goes on in its store from this seq: a rebuild drops its setup session/load's replay, as live did
-      ...(this.continuedFrom ? { continued: this.continuedFrom } : {}),
-      eventsId: this.eventsId,
-    };
-  }
-
-  #keeperListener(): KeeperChannelListener {
-    return {
-      record: (record: KeeperRecord) => {
-        if (this.#replaying && !this.#replayLive) return this.#bufferReplay(record);
-        this.#enqueue(() => this.#onRecord(record));
-      },
-      live: () => {
-        if (this.#replaying && !this.rebuildTimes.live) this.rebuildTimes.live = performance.now();
-        this.#replayLive = true;
-        this.#enqueue(() => this.#caughtUp());
-      },
-      gap: (from: number, next: number) => {
-        if (this.#replaying && !this.#replayLive) { // truncated after a snapshot: fine when a snapshot covers it (checked at live)
-          this.#replayGapNext = next;
-          this.#replayBuffer = [];
-          this.#replaySnapshot = this.#storeSnapshot; // the store's checkpoint still covers what came before (or nothing does)
-          this.#replayChunks.clear();
-          return;
-        }
-        this.#enqueue(() => {
-          if (this.#replaying) this.#rebuildFailed(new Error(`the record from ${from} to ${next - 1} is no longer kept`));
-          else log.warning('keeper: %s lost records %s..%s', this.id, from, next - 1);
-        });
-      },
-      fenced: () =>
-        this.#enqueue(() => {
-          this.#stdinBroken = true;
-          this.error = 'Another AIB took over this chat; this window no longer sends anything to it.';
-          this.#historyEnd('close'); // the new owner writes the store now
-        }),
-      lost: (error: Error | null) => this.#enqueue(() => this.#onLost(error)),
-      spawnFailed: (error: Error) =>
-        this.#enqueue(() => {
-          if (this.#replaying) return this.#rebuildFailed(error);
-          this.#pushStderr(clip(`Could not start the agent in the keeper: ${errorText(error)}`, 2000));
-          this.#exitResolve?.();
-          this.#readerEnded('');
-        }),
-      writeFailed: (error: Error) => {
-        this.#stdinBroken = true;
-        log.warning('keeper: a write to %s failed: %s', this.id, errorText(error));
-      },
-    };
-  }
-
-  /** Records are handled one at a time, in journal order, exactly like lines read from a pipe. */
-  #enqueue(work: () => unknown): void {
-    this.#records = this.#records.then(async () => {
-      await work();
-    }).catch((error) => this.#recordFailed(error));
-  }
-
-  #recordFailed(error: unknown): void {
-    if (this.#ended) return;
-    if (this.#replaying) return this.#rebuildFailed(error);
-    if (isOsOrValueError(error)) {
-      this.error = errorText(error);
-      this.#readerEnded('');
-      return;
-    }
-    const failure = this.#internalFailure(error);
-    this.#readerEnded(failure);
-  }
-
-  #now(): number {
-    return this.#clock ?? now();
-  }
-
-  async #onRecord(record: KeeperRecord): Promise<void> {
-    if (this.#ended) return;
-    try {
-      await this.#handleRecord(record);
-    } finally {
-      if (record.seq > this.#lastSeq) this.#lastSeq = record.seq;
-    }
-  }
-
-  async #handleRecord(record: KeeperRecord): Promise<void> {
-    // What the agent wrote is stamped with the keeper's time for it, live as in a replay: a take-over rebuilds every event with the
-    // same time it had (live, now() lags the keeper by the hop to AIB, a few ms, more under load). Live, only while this record is
-    // handled (with the reply's wait for its caller: the `connected` a session result makes).
-    const live = !this.#replaying;
-    this.#clock = live && record.kind !== 'out' && record.kind !== 'err' ? null : record.time / 1000;
-    try {
-      await this.#handleRecordAt(record);
-    } finally {
-      if (live && !this.#replaying) this.#clock = null;
-    }
-  }
-
-  async #handleRecordAt(record: KeeperRecord): Promise<void> {
-    if (record.kind === 'out') {
-      for (const line of this.#outLines.feed(record.body)) {
-        const pending = this.#handleLine(line);
-        if (pending) await pending;
-      }
-    } else if (record.kind === 'err') {
-      for (const line of this.#errLines.feed(record.body)) this.#pushStderr(clip(line.replace(RSTRIP, ''), 2000));
-    } else if (record.kind === 'in') {
-      if (!this.#replaying) return; // our own writes coming back
-      for (const line of new TextDecoder().decode(record.body).split('\n')) {
-        if (line.trim()) this.#replayIn(line);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 0)); // let a turn that just began reach its wait, as live code would
-    } else if (record.kind === 'note') {
-      if (this.#replaying) this.#replayNote(parseNote(record.body));
-    } else if (record.kind === 'exit') {
-      let code: number | null = null;
-      try {
-        const body = JSON.parse(new TextDecoder().decode(record.body));
-        code = typeof body.code === 'number' ? body.code : null;
-      } catch { /* no code */ }
-      await this.#flushLines();
-      this.exitCode = code;
-      this.#exitResolve?.();
-      if (!this.#replaying) {
-        if (this.channel) this.channelRemoved = this.channel.remove(); // the agent is gone: its record is no longer needed
-        // its store is kept (owner rule 2026-11-17): reopening the conversation goes on in it under this chat id
-        void this.#historyFinish();
-      }
-      this.#readerEnded('');
-    }
-  }
-
-  async #flushLines(): Promise<void> {
-    for (const line of this.#outLines.feed(null, true)) {
-      const pending = this.#handleLine(line);
-      if (pending) await pending;
-    }
-    for (const line of this.#errLines.feed(null, true)) this.#pushStderr(clip(line.replace(RSTRIP, ''), 2000));
-  }
-
-  async #onLost(_error: Error | null): Promise<void> {
-    if (this.#ended) return;
-    this.interrupted = true;
-    try {
-      await this.#flushLines();
-    } catch { /* what was cut off stays cut off */ }
-    this.error = KEEPER_LOST;
-    this.#exitResolve?.();
-    this.#settleRebuild?.[1](new Error(KEEPER_LOST));
-    this.#settleRebuild = null;
-    this.#readerEnded(KEEPER_LOST);
-  }
 
   // ---- rebuilding from the keeper's record ------------------------------------------------------------------------------------
   /** True while this chat is being rebuilt from the record: nothing is written, spawned or answered. */
   get replaying(): boolean {
-    return this.#replaying;
+    return this.$replaying;
   }
 
-  /** A line AIB wrote to the agent, read back from the record. */
-  #replayIn(line: string): void {
-    let message: unknown;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      return;
-    }
-    if (!isDict(message)) return;
-    const method = message.method;
-    if (isStr(method) && Object.hasOwn(message, 'id')) return this.#replayRequest(message);
-    if (isStr(method)) {
-      if (method === 'session/cancel') {
-        const sid = get(get(message, 'params', {}) as Json, 'sessionId');
-        if (!this.sessionId || sid === this.sessionId) {
-          this.cancelSeq = this.promptSeq;
-          if (this.autonomous) void this.#endAutonomous('cancelled'); // as cancel() did live
-        }
-      }
-      return;
-    }
-    if (Object.hasOwn(message, 'id')) this.#replayAnswered(message.id);
-  }
-
-  /** A request AIB sent: it is pending until its response shows up in the record (or arrives live). */
-  #replayRequest(message: Json): void {
-    const id = message.id;
-    const method = message.method as string;
-    const params = get(message, 'params', {}) as Json;
-    if (isInt(id) && id > this.counter) this.counter = id; // ids never collide with the old AIB's
-    const entry: Pending = { done: new ThreadEvent(), method, params };
-    this.pending.set(id, entry);
-    if (method === 'session/prompt') return this.#replayTurn(id, entry, params);
-    if (method === '_session/steering') return this.#replaySteer(id, entry, params);
-    // open elsewhere: a session/load after a hand-off (the chat was ready): the outside turns it showed are AIB events in the
-    // record already, so the history it brought back is dropped again
-    // A reopened chat's setup session/load: the transcript it replays is in the store; the outside turns live showed are `event`
-    // notes in the record (#showOutsideTurns).
-    const setupOfContinued = method === 'session/load' && this.#continued && !this.ready;
-    const reload = (method === 'session/load' && this.ready && !!this.sessionId) || setupOfContinued;
-    if (reload) this.#reload = { window: new ReplayWindow(), discard: true };
-    void entry.done.wait().then(() => {
-      if (this.pending.get(id) === entry) this.pending.delete(id);
-      if (reload) {
-        this.#reload = null;
-        if (setupOfContinued) this.#continued = false;
-        else if (!Object.hasOwn(entry.response ?? {}, 'error')) this.elsewhere = null;
-      }
-      if (method === 'session/close' && !Object.hasOwn(entry.response ?? {}, 'error') && get(params, 'sessionId') === this.sessionId) {
-        // the old AIB let go of this chat (another app opened it); the line saying so is in the record as its own event
-        this.elsewhere = { app: 'another app', pid: 0, entrypoint: '', since: this.#now(), released: true };
-        return;
-      }
-      this.#applyAnswered(method, params, entry.response ?? {});
-    });
-  }
-
-  /** What a response to a replayed request changes: the same state the live code sets after it awaited the request. */
-  #applyAnswered(method: string, params: Json, response: Json): void {
-    if (Object.hasOwn(response, 'error')) return;
-    const result = Object.hasOwn(response, 'result') ? response.result : {};
-    try {
-      if (method === 'initialize') {
-        this.initial = result;
-        this.#applyInitialize();
-      } else if (method === 'session/new' || method === 'session/load' || method === 'session/resume') {
-        this.#applySession(result, method === 'session/new' ? null : get(params, 'sessionId') as string | null);
-      } else if (method === 'session/set_mode') {
-        this.#modes().currentModeId = get(params, 'modeId');
-      } else if (method === 'session/set_config_option' && isDict(result)) {
-        Object.assign(this.settings, result);
-        this.#withModels(this.settings);
-      } else if (method === 'session/set_model') {
-        this.#modelSet(get(params, 'modelId'));
-      }
-    } catch (error) {
-      if (this.#replaying) this.#rebuildFailed(error);
-      else log.exception(error, 'Applying a response to a request from before the restart failed');
-    }
-  }
-
-  /**
-   * A steer the old AIB sent (B4): once its answer is known (from the record, or live) the same happens as live: injected shows the
-   * user's message (at the same place, so events number the same); the lane, restored later from the queue store, takes the answer
-   * from #replayedSteers instead of sending the message again.
-   */
-  #replaySteer(id: unknown, entry: Pending, params: Json): void {
-    const key = JSON.stringify(id);
-    const note = this.#steerNotes.get(key) ?? null;
-    this.#steerNotes.delete(key);
-    const itemId = note && isStr(note.receipt) ? note.receipt : null;
-    const outcome = entry.done.wait().then(() => {
-      if (this.pending.get(id) === entry) this.pending.delete(id);
-      const response = entry.response ?? {};
-      const result = Object.hasOwn(response, 'error') ? null : response.result;
-      const said = isDict(result) ? result.outcome : null;
-      if (said === 'injected' || said === 'startedNewTurn') {
-        const blocks = get(params, 'prompt', []);
-        const images = (Array.isArray(blocks) ? blocks : []).filter((b) => isDict(b) && b.type === 'image') as unknown as ImageBlock[];
-        if (itemId && note) {
-          this.#steerLanded(itemId, isStr(note.text) ? note.text : '', images, Array.isArray(note.files) ? note.files as FileSummary[] : [],
-            isStr(note.fingerprint) ? note.fingerprint : '');
-        }
-        return 'injected';
-      }
-      return said === 'promptRequired' ? 'promptRequired' : 'failed';
-    });
-    if (itemId) {
-      this.#replayedSteers.set(itemId, outcome);
-      while (this.#replayedSteers.size > 100) this.#replayedSteers.delete(this.#replayedSteers.keys().next().value!);
-    }
-  }
-
-  /** A prompt from the record: the turn starts again here, through the same code, waiting for the same response. */
-  #replayTurn(id: unknown, entry: Pending, params: Json): void {
-    const note = this.#receiptNotes.get(JSON.stringify(id)) ?? null;
-    this.#receiptNotes.delete(JSON.stringify(id));
-    const blocks = get(params, 'prompt', []);
-    const prompt = (Array.isArray(blocks) ? blocks : []).filter(isDict) as Json[];
-    const images = prompt.filter((b) => b.type === 'image') as unknown as ImageBlock[];
-    const said = prompt.find((b) => b.type === 'text' && isStr(b.text) && !b.text.startsWith('<studio-context>'));
-    const text = note && isStr(note.text) ? note.text : said ? String(said.text) : '';
-    const clientMessageId = note && isStr(note.receipt) ? note.receipt : null;
-    const seq = this.#startTurn(clientMessageId, note && isStr(note.fingerprint) ? note.fingerprint : '');
-    const userEvent: Json = { text, attachments: images, sessionId: this.sessionId, clientMessageId };
-    if (note && Array.isArray(note.files) && note.files.length) userEvent.files = note.files;
-    this.event('user', userEvent);
-    this.turn = this.#runTurn(seq, text, [], images, clientMessageId, null, { entry, id });
-  }
-
-  /** AIB answered an agent request: whatever this replay was about to answer for it was answered already. */
-  #replayAnswered(id: unknown): void {
-    const same = (other: unknown) => typeof other === typeof id && pyEq(other, id);
-    this.#held = this.#held.filter((h) => Object.hasOwn(h.message, 'method') || !same(h.message.id));
-    for (const [key, item] of [...this.permissions]) if (same(item.rpcId)) this.permissions.delete(key);
-    for (const [key, item] of [...this.elicitations]) if (same(item.rpcId)) this.elicitations.delete(key);
-    this.#deferred = this.#deferred.filter((m) => !same(m.id));
-  }
-
-  #replayNote(note: Json | null): void {
-    if (note && note.t === 'event' && isStr(note.kind)) { // AIB's own event (a line put back from the conversation keeps its time)
-      return this.event(note.kind, note.data ?? null, typeof note.time === 'number' ? note.time : undefined);
-    }
-    if (note && note.t === 'chat') { // a record that has every event: the rebuild numbers them as before
-      if (note.ev === 1 && isStr(note.eventsId) && note.eventsId) this.eventsId = note.eventsId;
-      // a reopened chat (its store's checkpoint is the state before this record): its setup session/load is dropped, as live
-      if (isInt(note.continued) && note.continued > 0 && !this.ready) {
-        this.continuedFrom = note.continued;
-        this.#continued = true;
-      }
-      return;
-    }
-    if (note?.t === 'lines' && Array.isArray(note.lines)) { // the conversation's kept lines a session/load merged (live: the same)
-      this.#merger = new LineMerger(note.lines.filter((l) => isDict(l) && isStr(l.kind) && isStr(l.after)) as KeptLine[]);
-      return;
-    }
-    if (note?.t === 'clientTerminalReleased' && isStr(note.terminalId)) {
-      this.#releasedTerminals.add(note.terminalId);
-      return;
-    }
-    if (!note || note.rpc === undefined) return;
-    if (note.t === 'receipt') this.#receiptNotes.set(JSON.stringify(note.rpc), note);
-    else if (note.t === 'steer') this.#steerNotes.set(JSON.stringify(note.rpc), note);
-    else if (note.t === 'fsWrite' || note.t === 'clientTerminal') this.#sideNotes.set(`${note.t}:${JSON.stringify(note.rpc)}`, note);
-  }
-
-  /**
-   * Client terminals in the keeper (note first): start one for terminal/create after writing its `clientTerminal` note in this chat's
-   * record; null lets it run as a child of AIB (the agent is not in the keeper, or the keeper is too old: the note then says so).
-   */
-  #terminalBackend(): TerminalBackend {
-    return {
-      create: async (plan: TerminalPlan) => {
-        const chat = this.channel;
-        if (!chat || chat.lost || this.rebuildError || !this.keeper) return null;
-        try {
-          await chat.ready;
-        } catch {
-          return null;
-        }
-        const client = chat.client;
-        const problem = !client || client.closed ? 'no keeper connection' : clientTerminalProblem(client.features, client.keeperVersion);
-        if (!plan.pinned) {
-          const note: Json = {
-            t: 'clientTerminal',
-            rpc: plan.rpc,
-            terminalId: plan.terminalId,
-            channel: problem ? null : clientTerminalChannel(plan.terminalId),
-            sessionId: plan.sessionId,
-            argv: plan.argv.slice(0, 50),
-            cwd: plan.cwd,
-            limit: plan.limit,
-          };
-          if (!await chat.sendNote(note)) throw new CapError('AIB could not record the terminal, so it was not started', -32603);
-        }
-        if (problem) {
-          if (!this.#terminalProblemLogged) log.info('keeper: client terminals of %s run inside AIB: %s', this.id, problem);
-          this.#terminalProblemLogged = true;
-          return null;
-        }
-        const terminal = KeeperClientTerminal.spawn(this.keeper, plan, this.id);
-        try {
-          await terminal.ready;
-        } catch (error) {
-          throw new CapError(`Could not start command: ${errorText(error) || errorName(error)}`, -32603);
-        }
-        return terminal;
-      },
-      release: async (terminal: TerminalBase) => {
-        if (terminal instanceof KeeperClientTerminal && this.channel) {
-          await this.channel.sendNote({ t: 'clientTerminalReleased', terminalId: terminal.id });
-        }
-      },
-    };
-  }
-
-  /** After a takeover: re-attach the client terminals the record shows still running in the keeper, before answering anything. */
-  async #adoptClientTerminals(): Promise<void> {
-    const caps = this.caps;
-    if (!(caps instanceof ClientCaps) || !this.keeper || !this.channel?.client) return;
-    const notes = [...this.#sideNotes.values()].map((n) => clientTerminalNote(n)).filter((n) => n && n.channel);
-    if (!notes.length) return;
-    const client = this.channel.client;
-    const channels = new Map((await client.list()).map((info) => [info.channel, info]));
-    for (const note of notes) {
-      const info = channels.get(note!.channel!);
-      if (!info || caps.terminals.has(note!.terminalId)) continue;
-      if (this.#releasedTerminals.has(note!.terminalId)) { // released, but not yet removed when the old AIB stopped
-        try {
-          if (info.live) await this.keeper.stopUnknown(client, info.channel);
-          await this.keeper.removeEnded(client, info.channel);
-        } catch { /* next time */ }
-        continue;
-      }
-      const terminal = KeeperClientTerminal.adopt(this.keeper, note!, info);
-      try {
-        await Promise.race([
-          terminal.ready,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 15000)),
-        ]);
-        caps.adoptTerminal(terminal);
-      } catch (error) {
-        log.warning('keeper: could not take over client terminal %s: %s', note!.terminalId, errorText(error));
-      }
-    }
-  }
-
-  /** The replay reached the live end: claim the channel (the old AIB can no longer write), send what it never sent, go live. */
-  async #caughtUp(): Promise<void> {
-    if (!this.#replaying || this.rebuildError || this.#ended) return;
-    try {
-      await this.#replayFromSnapshot();
-    } catch (error) {
-      return this.#rebuildFailed(error);
-    }
-    this.rebuildTimes.replayed = performance.now();
-    if (this.rebuildError || this.#ended) return;
-    try {
-      await this.channel!.claim();
-    } catch (error) {
-      return this.#rebuildFailed(error);
-    }
-    // The store catches up in the background: the chat is live at once (a slow or stuck store never holds the rebuild back).
-    // Events made meanwhile are queued; nothing is written before the take-over has claimed the store and dropped what it replaces.
-    if (this.historyState === 'open') {
-      this.#historyAdopting = true;
-      this.#historyAdopt = this.#historyTakeOver().finally(() => {
-        this.#historyAdopting = false;
-        if (this.#historyQueue.length && this.historyState === 'claimed') this.#historySchedule();
-      });
-    }
-    this.#replaying = false;
-    this.#clock = null;
-    try {
-      await this.#adoptClientTerminals(); // terminal/output, wait_for_exit, kill and release are answered from these
-    } catch (error) {
-      log.warning('keeper: taking over client terminals failed: %s', errorText(error));
-    }
-    const held = this.#held;
-    this.#held = [];
-    for (const { message, once } of held) {
-      try {
-        this.write(message, once); // never resends: each carries its once-key, and the record showed it was not written
-      } catch (error) {
-        log.warning('keeper: could not send a held answer: %s', errorText(error));
-      }
-    }
-    const deferred = this.#deferred;
-    this.#deferred = [];
-    for (const message of deferred) {
-      const answered = this.#answerDeferred(message);
-      if (answered instanceof Promise) answered.catch((error) => log.exception(error, 'Client capability request failed'));
-    }
-    this.rebuildTimes.settled = performance.now();
-    this.#settleRebuild?.[0]();
-    this.#settleRebuild = null;
-  }
-
-  /** A client capability request the old AIB had not answered: answer it now, unless its note says it was already acted on. */
-  #answerDeferred(message: Json): void | Promise<void> {
-    const key = JSON.stringify(message.id);
-    const method = message.method;
-    const terminalNote = method === 'terminal/create' ? clientTerminalNote(this.#sideNotes.get(`clientTerminal:${key}`) ?? null) : null;
-    if (terminalNote) {
-      const caps = this.caps instanceof ClientCaps ? this.caps : null;
-      if (terminalNote.channel && caps?.terminals.has(terminalNote.terminalId)) {
-        // Started before the restart and still there in the keeper: this is its answer.
-        this.write({ jsonrpc: '2.0', id: message.id, result: { terminalId: terminalNote.terminalId } });
-        return;
-      }
-      if (terminalNote.channel && caps?.terminalBackend) {
-        // Noted but never started (the old AIB stopped in between): start it now under the noted id; the keeper refuses a second one.
-        caps.pinTerminal(message.id, terminalNote.terminalId);
-        return this.#dispatchCaps(message);
-      }
-      this.write({
-        jsonrpc: '2.0',
-        id: message.id,
-        error: { code: -32603, message: 'The terminal was lost when AIB restarted. It was not started again.' },
-      });
-      return;
-    }
-    const written = this.#sideNotes.get(`fsWrite:${key}`);
-    if (method === 'fs/write_text_file' && written) {
-      const params = get(message, 'params', {}) as Json;
-      try {
-        const hash = createHash('sha256').update(Deno.readFileSync(String(params.path))).digest('hex');
-        if (hash === written.sha256) {
-          this.write({ jsonrpc: '2.0', id: message.id, result: null }); // the write happened before the restart
-          return;
-        }
-      } catch { /* not there: write it */ }
-    }
-    return this.#dispatchCaps(message);
-  }
-
-  // ---- snapshots: a rebuild starts at the newest one instead of the start of the record -----------------------------------------
-  /** A record met while replaying: kept until the replay has caught up; a snapshot note drops what it already covers. */
-  #bufferReplay(record: KeeperRecord): void {
-    if (record.kind === 'note') {
-      const note = parseNote(record.body);
-      if (note?.t === 'event' && note.chunk === 1 && Array.isArray(note.events)) { // stored history (written before a snapshot)
-        this.#replayChunks.set(record.seq, note.events.filter(isDict) as Json[]);
-        return;
-      }
-      if (note?.t === 'snapshot' && (note.sv === 1 || note.sv === 2) && isDict(note.state) && isInt(note.upTo)) {
-        // The store's checkpoint covers this note (the note written for it, or an older one): used only for the skip rule.
-        const ours = this.#storeSnapshot;
-        if (ours && (note.upTo as number) <= (ours.note.upTo as number)) {
-          if (this.#replaySnapshot === ours && record.seq > ours.seq) ours.seq = record.seq;
-          return;
-        }
-        // This build's note whose events never reached the store (a crash between the note and the flush): not a state to restore.
-        // The journal still holds every record after the store's checkpoint (truncate waits for the commit), so the replay rebuilds
-        // them; only when nothing else covers the record (no checkpoint and the journal was truncated) is it used, without history.
-        const st = note.state as Json;
-        const storeNote = note.sv === 2 && isInt(st.sequence) && st.eventsFrom === st.sequence + 1 && !(Array.isArray(note.events) && note.events.length);
-        const opened = this.#historyOpened;
-        if (storeNote && opened && this.historyState === 'open' && (st.sequence as number) > opened.writtenSeq && (ours || !this.#replayGapNext)) {
-          return;
-        }
-        if (note.sv === 2 && Array.isArray(note.events) && note.events.length) {
-          this.#replayChunks.set(record.seq, note.events.filter(isDict) as Json[]);
-        }
-        delete note.events; // kept once, in the chunks
-        this.#replaySnapshot = { note, seq: record.seq };
-        const upTo = note.upTo;
-        this.#replayBuffer = this.#replayBuffer.filter((r) => r.seq > upTo);
-        // Chunks wholly before the history this snapshot keeps are no longer needed.
-        const from = note.sv === 2 && isInt(note.state.eventsFrom) ? note.state.eventsFrom : Infinity;
-        for (const [seq, events] of this.#replayChunks) {
-          if (!events.length || (events.at(-1)!.seq as number) < from) this.#replayChunks.delete(seq);
-        }
-        return;
-      }
-    }
-    this.#replayBuffer.push(record);
-  }
-
-  /** At the live end: restore the newest snapshot (if any), then handle the records after it, all with side effects off. */
-  async #replayFromSnapshot(): Promise<void> {
-    const snapshot = this.#replaySnapshot;
-    const records = this.#replayBuffer;
-    const chunks = this.#replayChunks;
-    this.#replayBuffer = [];
-    this.#replaySnapshot = null;
-    this.#replayChunks = new Map();
-    if (this.#replayGapNext && (!snapshot || (snapshot.note.upTo as number) < this.#replayGapNext - 1)) {
-      throw new Error(`the record before ${this.#replayGapNext} is no longer kept and no snapshot covers it`);
-    }
-    this.#restoredSnapshot = snapshot;
-    const stored = snapshot ? await this.#historyRestoreEvents(snapshot.note) : null;
-    if (snapshot) this.#restoreSnapshot(snapshot.note, chunks, stored);
-    this.replayedFrom = snapshot ? snapshot.seq : 0;
-    for (const record of records) {
-      if (this.rebuildError || this.#ended) return;
-      // AIB's own writes and notes before the snapshot note were made before it was taken: the snapshot has them already.
-      if (snapshot && record.seq < snapshot.seq && (record.kind === 'in' || record.kind === 'note')) continue;
-      this.replayedRecords += 1;
-      await this.#onRecord(record);
-    }
-  }
-
-  /** The state a snapshot note carries, put back exactly (what the replay of everything before `upTo` would have rebuilt). */
-  #restoreSnapshot(note: Json, chunks: Map<number, Json[]>, stored: Json[] | null = null): void {
-    const s = note.state as Json;
-    const entries = (value: unknown) => (Array.isArray(value) ? value.filter((e) => Array.isArray(e) && e.length === 2) : []);
-    this.initial = s.initial ?? {};
-    if (isDict(this.initial) && Object.keys(this.initial).length) this.#applyInitialize();
-    this.sessionId = isStr(s.sessionId) ? s.sessionId : null;
-    this.ready = s.ready === true;
-    this.settings = isDict(s.settings) ? s.settings : {};
-    this.knownSessions = new Set(Array.isArray(s.knownSessions) ? s.knownSessions.filter(isStr) : []);
-    this.counter = isInt(s.counter) ? s.counter : 0;
-    this.promptSeq = isInt(s.promptSeq) ? s.promptSeq : 0;
-    this.ownerTouched = s.ownerTouched === true;
-    this.cancelSeq = isInt(s.cancelSeq) ? s.cancelSeq : 0;
-    this.changeSeq = isInt(s.changeSeq) ? s.changeSeq : 0;
-    this.changeFailures = Array.isArray(s.changeFailures) ? s.changeFailures.filter(isDict) as Json[] : [];
-    this.turnEndedAt = typeof s.turnEndedAt === 'number' ? s.turnEndedAt : null;
-    this.sequence = isInt(s.sequence) ? s.sequence : 0;
-    if (note.sv === 1) { // beta.8 and before: the whole history inside the note; the next snapshot stores it in chunks
-      this.events = Array.isArray(s.events) ? s.events.filter(isDict) as Json[] : [];
-      this.#eventsSaved = 0;
-      this.#eventChunks = [];
-    } else if (stored) { // the history store: its events up to the note's history start, then the chunks' (an older build's note)
-      const from = isInt(s.eventsFrom) ? s.eventsFrom : this.sequence + 1;
-      const last = stored.length ? stored.at(-1)!.seq as number : 0;
-      this.events = [...stored, ...this.#chunkEvents(chunks, Math.max(from, last + 1))];
-      this.#eventsSaved = this.sequence;
-      this.#eventChunks = [];
-    } else {
-      this.events = this.#chunkEvents(chunks, isInt(s.eventsFrom) ? s.eventsFrom : this.sequence + 1);
-      this.#eventsSaved = this.sequence;
-      this.#eventChunks = [...chunks].filter(([, e]) => e.length).map(([seq, e]) => [seq, e.at(-1)!.seq as number] as [number, number])
-        .sort((a, b) => a[0] - b[0]);
-    }
-    this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
-    this.subagents = new Map(entries(s.subagents) as [string, Json][]);
-    this.#liveHelpers = new Set(Array.isArray(s.liveHelpers) ? s.liveHelpers.filter(isStr) : []);
-    const times = (value: unknown) => new Map(entries(value).filter((e) => isStr(e[0]) && typeof e[1] === 'number') as [string, number][]);
-    this.#helperSince = times(s.helperSince);
-    for (const child of this.#liveHelpers) if (!this.#helperSince.has(child)) this.#helperSince.set(child, this.#now()); // an older note
-    this.#shellSince = times(s.shellSince);
-    this.turnFailedAt = typeof s.turnFailedAt === 'number' ? s.turnFailedAt : null;
-    this.turnError = isStr(s.turnError) ? s.turnError : '';
-    const asks = isDict(s.asks) ? s.asks : null;
-    this.#asks = asks && typeof asks.at === 'number' && isStr(asks.question) ? { at: asks.at, question: asks.question } : null;
-    const stall = isDict(s.stall) ? s.stall : null;
-    this.#stall = stall && typeof stall.at === 'number' && isStr(stall.kind)
-      ? { at: stall.at, kind: stall.kind, step: isStr(stall.step) ? stall.step : '' }
-      : null;
-    this.#lastStep = isStr(s.lastStep) ? s.lastStep : '';
-    this.#workEndedAt = typeof s.workEndedAt === 'number' ? s.workEndedAt : null;
-    this.#bgShells = new Map(
-      (Array.isArray(s.bgShells) ? s.bgShells : []).filter((e): e is [string, number[] | null] =>
-        Array.isArray(e) && isStr(e[0]) && (e[1] === null || (Array.isArray(e[1]) && e[1].every(isInt)))
-      ),
-    );
-    this.#bgTools = new Map(
-      entries(s.bgTools).filter((e) => isStr(e[0]) && isDict(e[1]) && isStr((e[1] as Json).task)) as [string, BackgroundTool][],
-    );
-    const b = isDict(s.breadth) ? s.breadth : {};
-    this.breadth = {
-      ...newState(),
-      ...b,
-      compaction: new Map(entries(b.compaction) as [string, never][]),
-    } as BreadthState;
-    this.writes.paths.clear();
-    for (const [k, v] of entries(isDict(s.writes) ? s.writes.paths : null)) this.writes.paths.set(k as string, v as number);
-    this.writes.calls.clear();
-    for (const [k] of entries(isDict(s.writes) ? s.writes.calls : null)) this.writes.calls.set(k as string, true);
-    this.promptReceipts = new Map(entries(s.promptReceipts) as [string, Receipt][]);
-    this.#requestsSeen = new Map(entries(s.requestsSeen) as [string, number][]);
-    this.withdrawn = new Map(entries(s.withdrawn) as [string, string][]);
-    this.stderr = Array.isArray(s.stderr) ? s.stderr.filter(isStr) : [];
-    if (isStr(s.eventsId) && s.eventsId) this.eventsId = s.eventsId;
-    this.#lastSeq = note.upTo as number;
-  }
-
-  /**
-   * The history a version-2 snapshot keeps: the stored events from `from` to `sequence`, each once, in order. A chunk that is gone
-   * (the keeper's size cap dropped an old segment) leaves the history starting after the hole, never with one in it.
-   */
-  #chunkEvents(chunks: Map<number, Json[]>, from: number): Json[] {
-    const bySeq = new Map<number, Json>();
-    for (const events of chunks.values()) {
-      for (const e of events) {
-        const seq = e.seq;
-        if (isInt(seq) && seq >= from && seq <= this.sequence) bySeq.set(seq, e);
-      }
-    }
-    const out: Json[] = [];
-    for (let seq = this.sequence; seq >= from; seq--) {
-      const e = bySeq.get(seq);
-      if (!e) {
-        log.warning('keeper: %s: events %s..%s are no longer stored; the history starts after them', this.id, from, seq);
-        break;
-      }
-      out.push(e);
-    }
-    return out.reverse();
-  }
-
-  /** Take a snapshot once the record queue has handled what it holds now (so `upTo` is exact). */
-  #scheduleSnapshot(): void {
-    if (!this.channel || this.#replaying || this.#snapshotQueued) return;
-    this.#snapshotQueued = true;
-    this.#enqueue(() => {
-      this.#snapshotQueued = false;
-      return this.#writeSnapshot();
-    });
-  }
-
-  /** Nothing is in flight: no turn, request, question, sign-in or held answer, and no line half read. */
-  #quiet(): boolean {
-    return this.ready && !this.busy && !this.closed && !this.#replaying && !this.rebuildError && !this.auth &&
-      this.pending.size === 0 && this.permissions.size === 0 && this.elicitations.size === 0 && !this.#deferred.length &&
-      !this.#held.length && this.#outLines.idle && this.#errLines.idle;
-  }
-
-  /** The chat's state for a snapshot note, without its event history (that goes in chunks: see #snapshotPlan). */
-  #snapshotState(): Json {
-    return {
-      initial: this.initial,
-      sessionId: this.sessionId,
-      ready: this.ready,
-      settings: this.settings,
-      knownSessions: [...this.knownSessions],
-      counter: this.counter,
-      promptSeq: this.promptSeq,
-      ownerTouched: this.ownerTouched,
-      cancelSeq: this.cancelSeq,
-      changeSeq: this.changeSeq,
-      changeFailures: this.changeFailures,
-      turnEndedAt: this.turnEndedAt,
-      // The history kept: events from eventsFrom to sequence, stored in this note and the chunk notes before it (and earlier ones).
-      eventsFrom: this.events.length ? this.events[0].seq : this.sequence + 1,
-      sequence: this.sequence,
-      subagents: [...this.subagents],
-      liveHelpers: [...this.#liveHelpers],
-      helperSince: [...this.#helperSince],
-      bgShells: [...this.#bgShells],
-      shellSince: [...this.#shellSince],
-      turnFailedAt: this.turnFailedAt,
-      turnError: this.turnError,
-      asks: this.#asks,
-      stall: this.#stall,
-      lastStep: this.#lastStep,
-      workEndedAt: this.#workEndedAt,
-      bgTools: [...this.#bgTools],
-      breadth: { ...this.breadth, compaction: [...this.breadth.compaction] },
-      writes: { paths: [...this.writes.paths], calls: [...this.writes.calls] },
-      promptReceipts: [...this.promptReceipts],
-      requestsSeen: [...this.#requestsSeen],
-      withdrawn: [...this.withdrawn],
-      stderr: this.stderr,
-      eventsId: this.eventsId,
-    };
-  }
-
-  /**
-   * What a snapshot writes now: the events made since the last one, cut into chunks of at most EVENT_CHUNK_BYTES (the last one goes
-   * inside the snapshot note when it fits), and the snapshot note. null when the state alone is too large to store.
-   */
-  #snapshotPlan(): SnapshotPlan | null {
-    const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo: this.#lastSeq, chat: this.#chatNote(), state: this.#snapshotState() };
-    const stateBytes = ENCODER.encode(JSON.stringify(note)).length;
-    if (stateBytes > MAX_SNAPSHOT_BYTES - 1024) return null;
-    const groups: { events: Json[]; bytes: number }[] = [];
-    let group: { events: Json[]; bytes: number } = { events: [], bytes: 0 };
-    for (const event of this.events) {
-      if ((event.seq as number) <= this.#eventsSaved) continue;
-      let stored = event;
-      let bytes = ENCODER.encode(JSON.stringify(event)).length + 1;
-      if (bytes > MAX_SNAPSHOT_BYTES - 1024) { // one agent message larger than a note: its place in the history says so after a restart
-        stored = {
-          seq: event.seq,
-          kind: 'studio_note',
-          time: event.time,
-          data: { message: 'An agent message too large to keep across a restart was left out here.' },
-        };
-        bytes = ENCODER.encode(JSON.stringify(stored)).length + 1;
-      }
-      if (group.events.length && group.bytes + bytes > EVENT_CHUNK_BYTES) {
-        groups.push(group);
-        group = { events: [], bytes: 0 };
-      }
-      group.events.push(stored);
-      group.bytes += bytes;
-    }
-    if (group.events.length) groups.push(group);
-    const inline = groups.length && stateBytes + groups.at(-1)!.bytes <= MAX_SNAPSHOT_BYTES - 1024 ? groups.pop()! : null;
-    note.events = inline ? inline.events : [];
-    return {
-      chunks: groups.map((g) => ({ t: 'event', chunk: 1, events: g.events })),
-      note,
-      bytes: stateBytes + (inline ? inline.bytes : 0),
-      chunkBytes: groups.reduce((sum, g) => sum + g.bytes, 0),
-      last: this.sequence,
-    };
-  }
-
-  /** The snapshot note a snapshot now would write (with the events since the last one), or null when it is too large to store. */
-  snapshotNote(): Json | null {
-    return this.#snapshotPlan()?.note ?? null;
-  }
-
-  /**
-   * Write a snapshot note when the chat is quiet (a turn just ended), then let the keeper drop the journal segments before it
-   * (truncate), so a rebuild reads and replays only what came after, plus the chunks the kept history is in. Never throws.
-   */
-  async #writeSnapshot(): Promise<void> {
-    const channel = this.channel;
-    if (!channel || channel.lost || !this.#quiet() || !this.#lastSeq) return;
-    // A new chat's store may still be opening (the Worker starts with the first chat): its first flush claims it.
-    if (this.historyState === 'open' && channel.epoch > 0) await this.#historyFlush();
-    if (this.historyState === 'claimed') return this.#writeCheckpoint(channel);
-    if (this.historyState === 'open') return; // not ours yet: the next quiet point checkpoints (no chunk notes meanwhile)
-    let plan: SnapshotPlan | null;
-    try {
-      plan = this.#snapshotPlan();
-    } catch (error) {
-      log.exception(error, 'keeper: making a snapshot failed');
-      return;
-    }
-    if (!plan) {
-      log.warning('keeper: %s: the snapshot would be larger than %s bytes; not written', this.id, MAX_SNAPSHOT_BYTES);
-      return;
-    }
-    // All sent at once, in order, before anything AIB writes after this moment (a write after the note is replayed; one before is not).
-    const stored = await Promise.all([...plan.chunks, plan.note].map((n) => channel.snapshot(n)));
-    const seq = stored.at(-1);
-    if (!seq || stored.some((s) => s === null)) return; // tried again at the next quiet moment (a stored chunk is then just repeated)
-    const lastOf = (events: unknown) => (events as Json[]).at(-1)!.seq as number;
-    plan.chunks.forEach((chunk, i) => this.#eventChunks.push([stored[i]!, lastOf(chunk.events)]));
-    if ((plan.note.events as Json[]).length) this.#eventChunks.push([seq, lastOf(plan.note.events)]);
-    this.#eventsSaved = plan.last;
-    const first = this.events.length ? this.events[0].seq as number : Infinity;
-    this.#eventChunks = this.#eventChunks.filter(([, last]) => last >= first);
-    this.snapshots += 1;
-    this.snapshotBytes = plan.bytes;
-    this.snapshotChunkBytes = plan.chunkBytes;
-    // Records after upTo are still needed (they may come before the note), and so are the chunks the kept history is in.
-    const after = (plan.note.upTo as number) + 1;
-    await channel.truncate(this.#eventChunks.length ? Math.min(this.#eventChunks[0][0], after) : after);
-  }
-
-  // ---- the history store (history-loading design 3.1-3.5) -------------------------------------------------------------------
-  /** The event as the store keeps it: whose it is (null: the chat's own; a helper's session id). */
-  #historyItem(item: Json): Json {
-    const data = item.data;
-    const sid = isDict(data) && isStr(data.sessionId) && data.sessionId ? data.sessionId : null;
-    return { ...item, session: sid && this.sessionId && sid !== this.sessionId ? sid : null };
-  }
-
-  #historyQueueEvent(item: Json): void {
-    this.#historyQueue.push(this.#historyItem(item));
-    this.#historySchedule();
-  }
-
-  #historySchedule(): void {
-    if (this.#historyTimer !== null) return;
-    const timer = setTimeout(() => {
-      this.#historyTimer = null;
-      void this.#historyFlush();
-    }, HISTORY_FLUSH_MS);
-    Deno.unrefTimer(timer as unknown as number);
-    this.#historyTimer = timer;
-  }
-
-  /**
-   * A new chat: a store of its own, claimed once the spawn has an epoch. A reopened chat opens the store it goes on in. A leftover
-   * file under a new chat's id (ids are random: in practice never) is not this chat's history: it is archived, never just deleted.
-   */
-  async #historyOpenNew(): Promise<void> {
-    const h = this.#history!;
-    try {
-      if (!this.#continueCkpt) {
-        const copy = await h.archive(this.id, 'leftover');
-        if (copy) log.warning('history: %s: a leftover store under this new chat id was kept as %s', this.id, copy);
-      }
-      this.#historyOpened = await h.open(this.id, { eventsId: this.eventsId, mainSession: this.sessionId });
-    } catch (error) {
-      this.#historyFailed(error);
-    }
-  }
-
-  /** Commit the queued events (moves written_seq only). True when everything queued is in the store. Writes run one at a time. */
-  #historyFlush(): Promise<boolean> {
-    const run = this.#historyChain.then(() => this.#historyFlushNow());
-    this.#historyChain = run.catch(() => {});
-    return run;
-  }
-
-  async #historyFlushNow(): Promise<boolean> {
-    if (this.#historyTimer !== null) {
-      clearTimeout(this.#historyTimer);
-      this.#historyTimer = null;
-    }
-    const h = this.#history;
-    if (!h) return false;
-    await this.#historyOpening;
-    const channel = this.channel;
-    if (this.historyState === 'open' && !this.#replaying && !this.#historyAdopting && channel && channel.epoch > 0) { // a new chat
-      try {
-        const ckpt = this.#continueCkpt;
-        if (ckpt) { // a reopened chat: its store goes on under the new channel
-          await h.continueAt(this.id, channel.epoch, ckpt);
-          this.historyCkpt = ckpt;
-          this.historyWrittenSeq = ckpt.sequence;
-          this.#continueCkpt = null;
-        } else await h.claim(this.id, channel.epoch);
-        this.historyState = 'claimed';
-      } catch (error) {
-        this.#historyFailed(error);
-        return false;
-      }
-    }
-    if (this.historyState !== 'claimed') {
-      if (this.historyState === 'open' && this.#historyQueue.length && !this.#replaying && !this.#historyAdopting) this.#historySchedule();
-      return false;
-    }
-    const batch = this.#historyQueue;
-    this.#historyQueue = [];
-    if (!batch.length) return true;
-    try {
-      const result = await h.append(this.id, batch as unknown as StoreEvent[]);
-      this.historyWrittenSeq = result.writtenSeq;
-      if (result.stopped) {
-        log.warning('history: %s: the disk is full; the store stopped writing (the chat goes on)', this.id);
-        this.#historyEnd('close');
-        return false;
-      }
-      return true;
-    } catch (error) {
-      this.#historyFailed(error);
-      return false;
-    }
-  }
-
-  #historyFenced = false;
+  $historyFenced = false;
   /** A take-over is claiming the store (no write and no claim by the 200 ms writer until it is done). */
-  #historyAdopting = false;
-  #historyAdopt: Promise<void> = Promise.resolve();
+  $historyAdopting = false;
+  $historyAdopt: Promise<void> = Promise.resolve();
 
-  #historyFailed(error: unknown): void {
-    if ((error as { code?: unknown })?.code === 'fenced') {
-      this.#historyFenced = true;
-      log.warning('history: %s: another owner took the store; this one stops writing', this.id);
-    } else log.warning('history: %s: the store stopped: %s', this.id, errorText(error));
-    this.#historyEnd('close');
-  }
-
-  /**
-   * Stop writing and close the store. Never deletes it (owner rule 2026-11-17: the chat history is permanent; only deleting the
-   * chat removes it: Aib.forgetHistory). A fenced writer leaves the new owner's store alone.
-   */
-  #historyEnd(_how: 'close' = 'close'): void {
-    const h = this.#history;
-    if (!h || this.historyState === 'off') return;
-    if (this.#historyTimer !== null) {
-      clearTimeout(this.#historyTimer);
-      this.#historyTimer = null;
-    }
-    this.#historyQueue = [];
-    const was = this.historyState;
-    this.historyState = 'dead';
-    if (was !== 'dead') this.#historyChain = this.#historyChain.then(() => h.close(this.id)).catch(() => {});
-  }
-
-  /**
-   * The chat stopped (its agent exited, the chat was closed, AIB quit with it idle): what is queued is written, then the store is
-   * closed and KEPT, so reopening the conversation goes on in it under the same chat id (Aib.connect). A store with no event at
-   * all (a chat that never began) is removed: it holds no history.
-   */
-  #historyFinish(): Promise<void> {
-    if (!this.#historyFinishing) this.#historyFinishing = this.#historyFinishNow();
-    return this.#historyFinishing;
-  }
-
-  #historyFinishing: Promise<void> | null = null;
-
-  /**
-   * This chat's store is no longer this connection's: written to the end, closed, kept (AIB, before a reopened chat with the same
-   * id opens it: one store is never written by two connections). Never throws.
-   */
-  async historyDetach(): Promise<void> {
-    await this.#historyFinish().catch(() => {});
-    await this.historySettled();
-  }
-
-  async #historyFinishNow(): Promise<void> {
-    const h = this.#history;
-    if (!h || this.historyState === 'off' || this.historyState === 'dead') return;
-    await this.#historyAdopt.catch(() => {});
-    await this.#historyOpening.catch(() => {});
-    if (this.historyState === 'open' || this.historyState === 'claimed') await this.#historyFlush().catch(() => false);
-    if (this.historyState !== 'open' && this.historyState !== 'claimed') return; // the flush failed: the store was closed (kept)
-    if (this.#historyTimer !== null) {
-      clearTimeout(this.#historyTimer);
-      this.#historyTimer = null;
-    }
-    this.#historyQueue = [];
-    this.historyState = 'dead';
-    const fenced = this.#historyFenced;
-    this.#historyChain = this.#historyChain.then(async () => {
-      if (fenced) await h.close(this.id);
-      else await h.release(this.id);
-    }).catch((error) =>
-      log.warning('history: %s: closing the store failed: %s', this.id, errorText(error))
-    );
-    await this.#historyChain;
-  }
-
-  /**
-   * A reopened conversation goes on in its chat's store (AIB found it): the same numbering, the next seq after the newest stored
-   * one, the stored tail in RAM, and the checkpoint a later take-over of the new channel starts from (record 0: this state, before
-   * the channel's first record). The setup session/load's replay is dropped (it is in the store); turns made outside AIB meanwhile
-   * are shown (#showOutsideTurns).
-   */
-  #continueFrom(c: ContinueStore): void {
-    if (!isStr(c.eventsId) || !c.eventsId || !isInt(c.sequence) || c.sequence < 1) return;
-    this.eventsId = c.eventsId;
-    this.sequence = c.sequence;
-    this.events = (Array.isArray(c.events) ? c.events : []).filter((e) => isDict(e) && isInt(e.seq) && (e.seq as number) <= c.sequence)
-      .slice(-MAX_EVENTS) as Json[];
-    this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
-    while (this.eventImageBytes > MAX_EVENT_IMAGE_BYTES && this.events.length > 1) this.eventImageBytes -= eventImageSize(this.events.shift()!);
-    this.#eventsSaved = c.sequence; // every seq up to here is in the store: it keeps its number
-    for (const e of this.events) { // where the outside turns begin: the last user message the chat showed
-      if (e.kind === 'user' && isDict(e.data) && isStr(e.data.text) && pyStrip(e.data.text)) {
-        this.#lastUserText = e.data.text;
-        this.#inUserText = false;
-      } else if (e.kind === 'update') this.#noteUserText(e.data);
-    }
-    this.continuedFrom = c.sequence;
-    this.#continued = true;
-    const state = this.#snapshotState();
-    state.eventsFrom = c.sequence + 1; // the history up to here is in the store
-    this.#continueCkpt = { state, sequence: c.sequence, record: 0, noteSeq: 0 };
-  }
-
-  /**
-   * After a reopened chat's setup session/load: of what the agent replayed, only the turns after the last one the store has (written
-   * in another app meanwhile) are shown, as `event` notes in the record (a rebuild drops the replay and shows these the same way).
-   */
-  #showOutsideTurns(replay: ReplayWindow): void {
-    const updates = replay.updates;
-    const outside = this.#lastUserText ? outsideTurns(updates, this.#lastUserText) : { updates: [], turns: 0 };
-    for (const params of outside.updates) {
-      this.#noteUserText(params);
-      this.recordedEvent('update', params);
-    }
-    if (outside.turns) {
-      const n = outside.turns;
-      this.recordedEvent('studio_note', { message: `${n} turn${n === 1 ? '' : 's'} from outside AIB above.`, sessionId: this.sessionId });
-    }
-    log.info(
-      'chat %s: went on in its history store from seq %s (%s outside turn(s) of %s replayed updates, the newest %s kept)',
-      this.id,
-      this.continuedFrom,
-      outside.turns,
-      replay.received,
-      updates.length,
-    );
-  }
-
-  /** The store's write chain has run (tests). */
-  async historySettled(): Promise<void> {
-    await this.#historyAdopt.catch(() => {});
-    await this.#historyFinishing?.catch(() => {});
-    await this.#historyChain;
-  }
-
-  /**
-   * A take-over: open the store and attach the keeper from its checkpoint (ckpt.record + 1), with the checkpoint's state as the
-   * snapshot the replay starts from. A checkpoint past the end of the journal (a reset WSL distro, another keeper) is not this
-   * record's: that store is deleted and the chat is rebuilt from its journal. 0: from the start.
-   */
-  async #historyAdoptFrom(info: ChannelInfo): Promise<number> {
-    const h = this.#history!;
-    try {
-      let opened = await h.open(this.id, {});
-      if (opened.ckpt && isInt(info.last) && opened.ckpt.record > info.last) {
-        log.warning(
-          'history: %s: the store checkpoint (record %s) is past the end of the journal (%s); it is not this record\'s and is dropped',
-          this.id,
-          opened.ckpt.record,
-          info.last,
-        );
-        const copy = await h.archive(this.id, 'stale-checkpoint'); // kept (owner rule: the history is permanent); a new store starts
-        if (copy) log.warning('history: %s: the old store was kept as %s', this.id, copy);
-        opened = await h.open(this.id, {});
-      }
-      this.#historyOpened = opened;
-      const ckpt = opened.ckpt;
-      if (!ckpt || !isDict(ckpt.state)) return this.attachedFrom = 0;
-      this.historyCkpt = ckpt;
-      this.#storeSnapshot = { note: { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo: ckpt.record, state: ckpt.state }, seq: ckpt.noteSeq };
-      this.#replaySnapshot = this.#storeSnapshot;
-      return this.attachedFrom = ckpt.record + 1;
-    } catch (error) {
-      log.warning('history: %s: the store could not be read; rebuilding from the journal: %s', this.id, errorText(error));
-      this.historyState = 'dead';
-      return this.attachedFrom = 0;
-    }
-  }
+  $historyFinishing: Promise<void> | null = null;
 
   /** The snapshot the take-over restored (the store's checkpoint, or a newer keeper note). */
-  #restoredSnapshot: { note: Json; seq: number } | null = null;
-
-  /**
-   * A take-over: the events a restored state's history has in the store: the chat's own newest (MAX_EVENTS) and each live helper's
-   * tail, up to min(state.sequence, eventsFrom - 1) (an older build's note keeps the rest in its chunks). null: the store has none
-   * (or another numbering): the chunks alone, as before.
-   */
-  async #historyRestoreEvents(note: Json): Promise<Json[] | null> {
-    const h = this.#history;
-    const opened = this.#historyOpened;
-    if (!h || this.historyState !== 'open' || !opened) return null;
-    const s = note.state as Json;
-    const sequence = isInt(s.sequence) ? s.sequence : 0;
-    const from = isInt(s.eventsFrom) ? s.eventsFrom : sequence + 1;
-    if (opened.eventsId && isStr(s.eventsId) && s.eventsId && opened.eventsId !== s.eventsId && opened.last) {
-      this.#storeReset = true; // another numbering: the store starts again from what this rebuild makes
-      return null;
-    }
-    const limit = Math.max(0, Math.min(sequence, from - 1));
-    this.#storeTrusted = limit;
-    if (!opened.last || limit < 1) return null;
-    try {
-      const rows: StoredEvent[] = [];
-      rows.push(...(await h.before(this.id, limit + 1, { session: null, limit: MAX_EVENTS, bytes: MAX_EVENT_IMAGE_BYTES })).events);
-      const live = Array.isArray(s.liveHelpers) ? s.liveHelpers.filter(isStr) : [];
-      for (const sid of live) {
-        rows.push(...(await h.helper(this.id, sid, { before: limit + 1, limit: HISTORY_HELPER_TAIL, bytes: MAX_EVENT_IMAGE_BYTES })).events);
-      }
-      rows.sort((a, b) => a.seq - b.seq);
-      return rows.map((r) => JSON.parse(r.data) as Json);
-    } catch (error) {
-      log.warning('history: %s: reading the store failed; the history starts after the restart: %s', this.id, errorText(error));
-      this.#storeTrusted = 0;
-      return null;
-    }
-  }
-
-  /**
-   * A take-over has caught up and claimed the channel: claim the store with the same epoch, delete its provisional events (above
-   * what the restore took from it), append what the replay rebuilt, and commit a newer keeper note's checkpoint (a crash between
-   * note and commit, or an older build's note: its history is in the store from now on).
-   */
-  async #historyTakeOver(): Promise<void> {
-    const h = this.#history;
-    const channel = this.channel;
-    if (!h || this.historyState !== 'open' || !channel) return;
-    try {
-      const opened = await h.open(this.id, { eventsId: this.eventsId, mainSession: this.sessionId });
-      this.#historyOpened = opened;
-      await h.claim(this.id, channel.epoch);
-      if (opened.eventsIdChanged || this.#storeReset) {
-        await h.reset(this.id, this.eventsId);
-        this.#storeTrusted = 0;
-      } else await h.dropProvisional(this.id, this.#storeTrusted);
-      const bySeq = new Map<number, Json>();
-      for (const e of this.events) if ((e.seq as number) > this.#storeTrusted) bySeq.set(e.seq as number, this.#historyItem(e));
-      for (const e of this.#historyQueue) if ((e.seq as number) > this.#storeTrusted) bySeq.set(e.seq as number, e);
-      this.#historyQueue = [...bySeq.values()].sort((a, b) => (a.seq as number) - (b.seq as number));
-      if (this.historyState !== 'open') return; // closed or deleted meanwhile
-      this.historyState = 'claimed'; // only now: nothing is appended before the provisional events are gone
-    } catch (error) {
-      this.#historyFailed(error);
-      return;
-    }
-    if (!(await this.#historyFlush())) return;
-    try {
-      const { writtenSeq, ckpt } = await h.getCheckpoint(this.id);
-      this.historyWrittenSeq = writtenSeq;
-      this.historyCkpt = ckpt;
-      const restored = this.#restoredSnapshot;
-      const s = restored && isDict(restored.note.state) ? restored.note.state as Json : null;
-      if (restored && s && restored !== this.#storeSnapshot && isInt(s.sequence) && s.sequence <= writtenSeq) {
-        const record = restored.note.upTo as number;
-        if (!ckpt || record > ckpt.record) {
-          const state = { ...s, eventsFrom: s.sequence + 1 }; // its history is in the store now
-          const next: Checkpoint = { state, sequence: s.sequence, record, noteSeq: restored.seq };
-          if (await h.setCheckpoint(this.id, next)) this.historyCkpt = next;
-        }
-      }
-    } catch (error) {
-      log.warning('history: %s: committing the take-over checkpoint failed: %s', this.id, errorText(error));
-    }
-  }
-
-  /**
-   * The quiet-point checkpoint (design 3.2): the keeper's sv:2 note (no chunks: eventsFrom = sequence + 1) is sent at the quiet
-   * moment itself, before anything AIB writes after it (as the old snapshot was: a prompt sent right after a turn end never makes
-   * the checkpoint wait for the next quiet point); then the queued events are flushed, ckpt = {state, sequence, record, noteSeq}
-   * is committed once both are done, and the journal is truncated before ckpt.record + 1 (never awaited: a reconnecting WSL bridge
-   * holds operations back, and the store writer never waits on it).
-   *
-   * Crash safety: until the commit, the old ckpt stands and the journal still holds every record after it. A take-over uses a
-   * newer note only when the store has its events (written_seq >= note.state.sequence, see #bufferReplay); otherwise it replays
-   * from the old ckpt as if the note were not there.
-   */
-  async #writeCheckpoint(channel: KeeperChannel): Promise<void> {
-    const h = this.#history!;
-    if (channel.lost || !this.#quiet() || this.historyState !== 'claimed') return;
-    const upTo = this.#lastSeq;
-    const sequence = this.sequence;
-    const state = this.#snapshotState();
-    state.eventsFrom = sequence + 1; // the history is in the store (an older build opens the chat without it, and works)
-    const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo, chat: this.#chatNote(), state, events: [] };
-    const bytes = ENCODER.encode(JSON.stringify(note)).length;
-    if (bytes > MAX_SNAPSHOT_BYTES - 1024) {
-      log.warning('keeper: %s: the snapshot would be larger than %s bytes; not written', this.id, MAX_SNAPSHOT_BYTES);
-      return;
-    }
-    const noted = channel.snapshot(note); // sent now, in order with everything AIB writes
-    if (this.historyStopAfter === 'note') {
-      await noted;
-      return this.#historyStop();
-    }
-    const [flushed, noteSeq] = await Promise.all([this.#historyFlush(), noted]);
-    if (!noteSeq) return;
-    this.snapshots += 1;
-    this.snapshotBytes = bytes;
-    this.snapshotChunkBytes = 0;
-    this.#eventsSaved = sequence;
-    this.#eventChunks = [];
-    if (!flushed || this.historyWrittenSeq < sequence) return; // committed at the next quiet point
-    if (this.historyStopAfter === 'flush') return this.#historyStop();
-    const ckpt: Checkpoint = { state, sequence, record: upTo, noteSeq };
-    try {
-      if (!(await h.setCheckpoint(this.id, ckpt))) return;
-    } catch (error) {
-      this.#historyFailed(error);
-      return;
-    }
-    this.historyCkpt = ckpt;
-    if (this.historyStopAfter === 'commit') return this.#historyStop();
-    void channel.truncate(upTo + 1);
-  }
-
-  /** Tests: the checkpoint stopped at historyStopAfter (a crash right there): nothing more reaches the store from this host. */
-  #historyStop(): void {
-    this.historyStopAfter = null;
-    this.#historyFenced = true; // and it never deletes it either
-    this.#historyEnd('close');
-  }
-
-  /**
-   * One page of events from the store (history pages older than RAM, a finished helper's events): the same Page as event_pages.ts
-   * page(), with `more` and `first` from the store. null: no store.
-   */
-  async storePage(query: PageQuery): Promise<Page | null> {
-    const h = this.#history;
-    if (!h || (this.historyState !== 'claimed' && this.historyState !== 'open')) return null;
-    const main = this.sessionId ?? '';
-    const session = !query.session || query.session === 'main' || query.session === main ? null : String(query.session);
-    const bytes = Math.max(4096, Math.min(8 * 1024 * 1024, Math.trunc(Number(query.bytes) || 1024 * 1024)));
-    const options = { session, bytes, limit: 100_000 };
-    try {
-      let rows: StoredEvent[];
-      let more: boolean;
-      let newer = false;
-      if (query.around !== undefined) {
-        const older = await h.before(this.id, query.around + 1, { ...options, bytes: bytes / 2 });
-        const later = await h.after(this.id, query.around, { ...options, bytes: bytes / 2 });
-        rows = [...older.events, ...later.events];
-        more = older.more;
-        newer = later.more;
-      } else if (query.after !== undefined) {
-        const p = await h.after(this.id, query.after, options);
-        rows = p.events;
-        more = (await h.before(this.id, (p.from ?? query.after + 1), { ...options, limit: 1, bytes: 1 })).events.length > 0;
-        newer = p.more;
-      } else {
-        const p = query.before !== undefined ? await h.before(this.id, query.before, options) : await h.tail(this.id, options);
-        rows = p.events;
-        more = p.more;
-        if (query.before !== undefined && p.to !== null) newer = true;
-      }
-      const events = rows.map((r) => JSON.parse(r.data) as Ev);
-      const result = page(arraySource(events, { eventsId: this.eventsId, cursor: this.sequence, stable: this.stableSeq, mainSession: main }), {
-        ...query,
-        bytes: Number.MAX_SAFE_INTEGER,
-        before: undefined,
-        after: undefined,
-        around: undefined,
-      });
-      const info = await h.info(this.id) as { first?: number | null };
-      result.more = more;
-      result.newer = newer;
-      if (session === null && typeof info?.first === 'number') result.first = info.first;
-      if (query.before !== undefined || query.after !== undefined || query.around !== undefined) {
-        delete result.turn;
-        delete result.helpers;
-      }
-      return result;
-    } catch (error) {
-      log.warning('history: %s: reading a page from the store failed: %s', this.id, errorText(error));
-      return null;
-    }
-  }
-
-  /** One event whole from the store (one RAM no longer keeps), or null. */
-  async storeEvent(seq: number): Promise<Ev | null> {
-    const h = this.#history;
-    if (!h || (this.historyState !== 'claimed' && this.historyState !== 'open')) return null;
-    try {
-      const row = await h.event(this.id, seq);
-      return row ? JSON.parse(row.data) as Ev : null;
-    } catch {
-      return null;
-    }
-  }
+  $restoredSnapshot: { note: Json; seq: number } | null = null;
 
   /** The record cannot be rebuilt by this code: keep showing the chat, never write to it. */
-  #rebuildFailed(error: unknown): void {
+  $rebuildFailed(error: unknown): void {
     if (this.rebuildError) return;
     log.exception(error, 'Rebuilding a chat from the keeper record failed');
     this.rebuildError = `AIB could not continue this chat after the restart (${
       errorText(error) || errorName(error)
     }). The agent goes on in the background; nothing is sent to it from here. Close the chat to stop it.`;
     this.error = this.rebuildError;
-    this.#held = [];
-    this.#deferred = [];
-    this.#settleRebuild?.[1](error instanceof Error ? error : new Error(String(error)));
-    this.#settleRebuild = null;
+    this.$held = [];
+    this.$deferred = [];
+    this.$settleRebuild?.[1](error instanceof Error ? error : new Error(String(error)));
+    this.$settleRebuild = null;
   }
 
-  #refuseReadOnly(): void {
+  $refuseReadOnly(): void {
     if (this.rebuildError) throw new ValueError(this.rebuildError);
   }
 
   /** Answer a client capability request; in the keeper the side effects that cannot be undone get their note first. */
-  #dispatchCaps(message: Json): void | Promise<void> {
+  $dispatchCaps(message: Json): void | Promise<void> {
     const method = message.method;
     // terminal/create: with a terminal backend (this chat is in the keeper) the backend writes the note itself, with the channel id.
     const terminalNoted = method === 'terminal/create' && this.caps instanceof ClientCaps && this.caps.terminalBackend !== null;
@@ -3173,7 +763,7 @@ export class Connection {
    * it a rebuild may number AIB's own events differently. A chat outside the keeper is not rebuilt: every seq is stable.
    */
   get stableSeq(): number {
-    return this.channel ? Math.min(this.#eventsSaved, this.sequence) : this.sequence;
+    return this.channel ? Math.min(this.$eventsSaved, this.sequence) : this.sequence;
   }
 
   /** This chat's events as an event_pages.ts source (the in-memory array today; the history store in phase 2). */
@@ -3196,7 +786,7 @@ export class Connection {
    * record as an `event` note, so a rebuild has it in the same place and numbers every later event the same.
    */
   recordedEvent(kind: string, data: unknown, time?: number): void {
-    if (this.channel && !this.#replaying && !this.rebuildError) {
+    if (this.channel && !this.$replaying && !this.rebuildError) {
       void this.channel.sendNote({ t: 'event', kind, data, ...(time === undefined ? {} : { time }) });
     }
     this.event(kind, data, time);
@@ -3204,7 +794,7 @@ export class Connection {
 
   event(kind: string, data: unknown, time?: number): void {
     this.sequence += 1;
-    const item: Json = { seq: this.sequence, kind, data, time: time ?? this.#now() };
+    const item: Json = { seq: this.sequence, kind, data, time: time ?? this.$now() };
     // History the agent re-sends on session/load: 'time' is the reconnect, not when it was said.
     if (kind === 'update' && !this.ready && this.sessionId) item.replay = true;
     if (this.events.length >= MAX_EVENTS) {
@@ -3212,9 +802,9 @@ export class Connection {
     }
     this.events.push(item);
     this.eventImageBytes += eventImageSize(item);
-    if (this.historyState === 'open' || this.historyState === 'claimed') this.#historyQueueEvent(item);
-    if (kind === 'update') this.#trackSubagent(data, item.time as number);
-    if (KEPT_KINDS.has(kind) && this.lines && !this.#replaying) this.#keepLine(kind, data, item.time as number);
+    if (this.historyState === 'open' || this.historyState === 'claimed') this.$historyQueueEvent(item);
+    if (kind === 'update') this.$trackSubagent(data, item.time as number);
+    if (KEPT_KINDS.has(kind) && this.lines && !this.$replaying) this.#keepLine(kind, data, item.time as number);
     while (
       this.eventImageBytes > MAX_EVENT_IMAGE_BYTES && this.events.length > 1
     ) {
@@ -3242,7 +832,7 @@ export class Connection {
   }
 
   /** A session/load replay (live): a user message starts or the agent answers; the kept lines of the turn before go in first. */
-  #mergeReplayed(params: Json): void {
+  $mergeReplayed(params: Json): void {
     const update = get(params, 'update', {}) as Json;
     const sid = get(params, 'sessionId');
     if (isStr(sid) && sid && sid !== this.sessionId) return; // a helper's
@@ -3263,17 +853,17 @@ export class Connection {
   }
 
   /** The end of a session/load replay: the last replayed turn's lines, then no more merging. */
-  #mergeDone(): void {
-    if (!this.#merger) return;
+  $mergeDone(): void {
+    if (!this.$merger) return;
     if (this.#mergeUserText !== null) this.#mergeAnchor = anchorOf(this.#mergeUserText);
     this.#restoreLines(this.#mergeAnchor);
-    this.#merger = null;
+    this.$merger = null;
     this.#mergeUserText = null;
     this.#mergeAnchor = '';
   }
 
   #restoreLines(anchor: string): void {
-    for (const line of this.#merger?.take(anchor) ?? []) this.#restoreLine(line);
+    for (const line of this.$merger?.take(anchor) ?? []) this.#restoreLine(line);
   }
 
   #restoreLine(line: KeptLine): void {
@@ -3281,710 +871,7 @@ export class Connection {
     this.event(line.kind, data, line.time); // no note of its own: a rebuild merges them again from the `lines` note
   }
 
-  /** Remember what the agent says each child can do (RFD form: capabilities.cancel). */
-  #trackSubagent(params: unknown, at?: number): void {
-    const update = isDict(params) ? get(params, 'update') : null;
-    if (!isDict(update)) return;
-    if (get(update, 'sessionUpdate') !== 'subagent_update') {
-      // the child's own config_option_update names the model it runs (the phone's subagent row says it)
-      const sid = isDict(params) ? get(params, 'sessionId') : null;
-      const own = isStr(sid) ? this.subagents.get(sid) : undefined;
-      if (own && get(update, 'sessionUpdate') === 'config_option_update') {
-        const options = get(update, 'configOptions');
-        for (const o of Array.isArray(options) ? options : []) {
-          if (!isDict(o) || (o.id !== 'model' && o.category !== 'model') || !isStr(o.currentValue) || !o.currentValue) continue;
-          const pick = (Array.isArray(o.options) ? o.options : []).find((x) => isDict(x) && x.value === o.currentValue);
-          const label = isDict(pick) && isStr(pick.name) ? pick.name : '';
-          own.model = clip(label || o.currentValue, 80);
-        }
-      }
-      return;
-    }
-    const child = get(update, 'sessionId');
-    if (!isStr(child) || !child || child === this.sessionId) return;
-    let entry = this.subagents.get(child);
-    if (!entry) this.subagents.set(child, entry = { capabilities: {} });
-    // when it started (first seen) and ended, in seconds: the phone's row says how long it has run
-    if (typeof at === 'number' && Number.isFinite(at)) {
-      if (!(typeof entry.startedAt === 'number')) entry.startedAt = at;
-    }
-    {
-      const sub = isDict(get(update, 'subagent')) ? (get(update, 'subagent') as Json) : update;
-      const meta = isDict(get(sub, '_meta')) ? (get(sub, '_meta') as Json) : {};
-      const cc = isDict(meta.claudeCode) ? (meta.claudeCode as Json) : {};
-      const m = [get(sub, 'model'), meta.model, cc.model, get(update, 'model')].find((v) => isStr(v) && v.trim());
-      if (isStr(m)) entry.model = clip(m, 80);
-    }
-    for (const name of ['title', 'description']) {
-      const value = get(update, name);
-      if (isStr(value) && pyStrip(value)) entry[name] = clip(value, 500);
-    }
-    // Where the child works, when the agent says (worktrees/merge.ts: only a helper inside the chat's own worktree holds a merge).
-    for (const name of ['cwd', 'worktree', 'worktreePath', 'workingDirectory']) {
-      const value = get(update, name);
-      if (isStr(value) && pyStrip(value)) entry.cwd = clip(value, 1000);
-    }
-    if (isDict(get(update, 'capabilities'))) {
-      entry.capabilities = update.capabilities;
-    }
-    const raw = get(update, 'state');
-    const state = isDict(raw) ? get(raw, 'state') : raw;
-    if (isStr(state)) {
-      const was = subagentEnd(entry);
-      entry.state = state;
-      const why = isDict(raw) ? get(raw, 'stopReason') : null;
-      if (isStr(why)) entry.stopReason = clip(why, 40);
-      else delete entry.stopReason;
-      const how = subagentEnd(entry);
-      if (how !== null && typeof entry.endedAt !== 'number' && typeof at === 'number' && Number.isFinite(at)) entry.endedAt = at;
-      else if (how === null) delete entry.endedAt;
-      // subagent worktrees P3: its end, once per end; and its start again after an end (a SendMessage continued it: in the RFD form
-      // that call is not shown as a tool call), as null
-      if ((how !== null) !== (was !== null) && this.onSubagentEnded) {
-        try {
-          this.onSubagentEnded(this, child, how);
-        } catch (error) {
-          log.exception(error, 'onSubagentEnded failed');
-        }
-      }
-    }
-    while (this.subagents.size > 200) {
-      this.subagents.delete(this.subagents.keys().next().value!);
-    }
-  }
-
-  // ---- Claude Code's held turns and the cycles it starts on its own ------------------------------------------------------------
-  /**
-   * The Claude Code adapter (claude-agent-acp) holds a prompt's response open while background helpers (Agent with
-   * run_in_background) that the turn started still run: the reply has ended, but the response comes only once they finish, or when
-   * the next prompt arrives (the adapter then settles the held turn at once). It also starts model cycles on its own when a
-   * background task finishes, with no prompt at all. Its updates say both: the usage_update of a result carries
-   * `_meta['_claude/origin']` (no other update does), `human` for a prompt's result, `task-notification` (and the other kinds in
-   * AUTONOMOUS_ORIGINS) for a cycle it started. Only this adapter announces `agentCapabilities._meta.claudeCode`.
-   */
-  #claudeHolds(): boolean {
-    const caps = isDict(this.initial) ? get(this.initial, 'agentCapabilities') : null;
-    const meta = isDict(caps) ? get(caps, '_meta') : null;
-    return isDict(meta) && isDict(get(meta, 'claudeCode'));
-  }
-
-  /**
-   * Background helpers of this chat still run although no turn may be working (Claude Code's held turns): the chat must not be cut
-   * off (Aib.busyList), but it is not busy for the page or the queue.
-   */
-  helpersRunning(): boolean {
-    return !this.closed && this.#liveHelpers.size > 0;
-  }
-
-  /**
-   * A Claude Code background shell of this chat still runs (a long test run started with Bash run_in_background, its reply long
-   * ended): like helpersRunning, the chat must not be cut off on quit, update or idle exit (Aib.busyList 'background'), but it is
-   * not busy for the page or the queue. Claude Code tells a client like AIB only that the command went to the background (the Bash
-   * result's `_meta.claudeCode.toolResponse.backgroundTaskId`), never that it ended, so the end is read from the OS: the agent's
-   * processes that started with the command are gone (platform/descendants.ts). A shell whose processes could not be listed counts
-   * until a task-notification cycle of Claude Code (it starts one when a background task ends).
-   */
-  backgroundShellsRunning(): boolean {
-    if (this.closed || !this.#bgShells.size) return false;
-    const now = this.#descendants();
-    if (now) {
-      const live = new Set(now.map((d) => d.pid));
-      for (const [task, pids] of [...this.#bgShells]) {
-        if (pids !== null && !pids.some((p) => live.has(p))) {
-          this.#bgShells.delete(task);
-          log.info('chat %s: background shell %s ended', this.id, task);
-        }
-      }
-    }
-    return this.#bgShells.size > 0;
-  }
-
-  /** How many processes run under the agent right now (what ending a finished helper's chat takes down); 0 when they cannot be listed. */
-  processCount(): number {
-    return this.#descendants(true)?.length ?? 0;
-  }
-
-  /** The background shells this chat counts as running now (task ids), for tests and the log. */
-  backgroundShells(): string[] {
-    return this.backgroundShellsRunning() ? [...this.#bgShells.keys()] : [];
-  }
-
-  /**
-   * The agent's processes now (platform/descendants.ts), or null when they cannot be listed. A WSL chat's agent is a Linux process:
-   * its distro's helper lists them (wsl/procs.ts), from a snapshot a few seconds old at most, else null while a new one is fetched.
-   * `fresh`: a Windows snapshot taken now; a WSL snapshot asked for from now on (so null at first: see #afterWslTree).
-   */
-  #descendants(fresh = false): Descendant[] | null {
-    const pid = this.process?.pid;
-    if (!pid) return null;
-    if (this.wsl) return wslDescendants(this.wsl.distro, pid, fresh ? Date.now() : 0);
-    if (fresh) refreshDescendants();
-    return descendants(pid);
-  }
-
-  /** A WSL chat: `then` with a process snapshot of its distro asked for from now on, once the helper answered (null: it did not). */
-  #afterWslTree(then: (now: Descendant[] | null) => void): void {
-    const pid = this.process?.pid;
-    if (!this.wsl || !pid) return;
-    const asked = Date.now();
-    const distro = this.wsl.distro;
-    void refreshWslDescendants(distro, pid).then(() => {
-      if (!this.closed) then(wslDescendants(distro, pid, asked));
-    });
-  }
-
-  /** The agent's processes now, as the turn begins (an MCP server, the PowerShell tool's own shell): see #markBackground. */
-  #noteTurnProcesses(): void {
-    this.#turnProcesses = null;
-    const pid = this.process?.pid;
-    if (this.#replaying || !pid) return;
-    const now = this.#descendants(true);
-    if (now) this.#turnProcesses = new Set(now.map((d) => d.pid));
-    else if (this.wsl) {
-      // the snapshot comes a moment later: only processes that were already running when the turn began count as the turn's
-      const seq = this.promptSeq + 1; // #startTurn counts the turn just after this
-      const began = Date.now() / 1000;
-      this.#afterWslTree((later) => {
-        if (!later || this.promptSeq !== seq || this.#turnProcesses !== null) return;
-        // No shell call of this turn yet when the answer came: the distro listed them before any command ran, so all are the
-        // turn's. Else by start time (to the hundredth of a second, never later than the real one: wsl/procs.ts; an older helper's
-        // whole seconds could make one started a moment before the turn look newer, and Stop would end it with the command).
-        const before = ![...this.#tools.values()].some((t) => t.shell && t.turn === seq);
-        this.#turnProcesses = new Set(later.filter((d) => before || (d.started !== null && d.started < began)).map((d) => d.pid));
-      });
-    }
-  }
-
-  /**
-   * Every agent's tool calls (any session: a helper's shells run in the same agent): which are shell commands, their status, and
-   * which moved to the background (Claude Code's backgroundTaskId, the result text; see backgroundTask), so the
-   * page can mark the row and Stop can end it. Also notes main-session output for the steer rules (B1, B13).
-   */
-  #watchTools(params: Json): void {
-    if (!this.ready || this.closed) return;
-    const update = get(params, 'update');
-    if (!isDict(update)) return;
-    const kind = get(update, 'sessionUpdate');
-    const main = get(params, 'sessionId') === this.sessionId;
-    this.#lastOutputAt = this.#now(); // S3: anything on the stream means the agent is not quiet
-    if (main && kind === 'tool_call') {
-      const m = get(update, '_meta');
-      const cc = isDict(m) ? get(m, 'claudeCode') : null;
-      const title = get(update, 'title');
-      if (!(isDict(cc) && get(cc as Json, 'parentToolUseId')) && isStr(title) && title.trim()) {
-        this.#lastStep = title.replace(/\s+/g, ' ').trim().slice(0, 200);
-      }
-    }
-    const meta = get(update, '_meta');
-    const claude = isDict(meta) ? get(meta, 'claudeCode') : null;
-    if (
-      main && this.busy && !this.autonomous &&
-      (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'tool_call') &&
-      !(isDict(claude) && get(claude, 'parentToolUseId'))
-    ) this.#mainOutput();
-    // Subagent worktrees P3: in the adapter's subagents (RFD) form a launch's Agent/Task call and a SendMessage are never shown as tool
-    // calls; each becomes a session_message whose messageId is the call's tool_use_id, from the calling session to the child (its
-    // session id is its agentId; claude-agent-acp native-subagents.js linkedSessionMessages). That is the stream's word that the call
-    // was made, for that agent: the same as the Agent tool call's (onClaudeTool), which the agent can't forge.
-    if (kind === 'session_message' && this.onClaudeTool && !this.#replaying) {
-      const use = get(update, 'messageId'), to = get(update, 'recipientSessionId'), from = get(update, 'senderSessionId');
-      if (isStr(use) && /^toolu_/.test(use) && isStr(to) && to && isStr(from) && from && to !== this.sessionId && this.subagents.has(to)) {
-        try {
-          this.onClaudeTool(this, 'Agent', use, {}, '', to);
-        } catch (error) {
-          log.exception(error, 'onClaudeTool failed');
-        }
-      }
-    }
-    if (kind === 'session_message' || kind === 'subagent_update') return this.#watchHelper(update, kind, main);
-    if (kind !== 'tool_call' && kind !== 'tool_call_update') return;
-    const id = get(update, 'toolCallId');
-    if (!isStr(id) || !id) return;
-    const toolName = isDict(claude) ? get(claude, 'toolName') : null;
-    let seen = this.#tools.get(id);
-    if (kind === 'tool_call' && !seen) {
-      // A shell command: Claude Code's Bash or PowerShell; for the other agents an `execute` tool (Codex exec_command).
-      // Never an MCP tool or WebFetch, whatever kind it reports.
-      const shell = isStr(toolName) ? toolName === 'Bash' || toolName === 'PowerShell' : get(update, 'kind') === 'execute';
-      const parent = isDict(claude) ? get(claude, 'parentToolUseId') : null;
-      const toolKind = get(update, 'kind');
-      seen = {
-        shell,
-        edit: toolKind === 'edit' || toolKind === 'delete' || toolKind === 'move',
-        toolName: isStr(toolName) ? toolName : null,
-        status: '',
-        title: isStr(get(update, 'title')) ? get(update, 'title') as string : '',
-        since: this.#now(),
-        main,
-        turn: this.promptSeq,
-        parent: isStr(parent) ? parent : null,
-        mcp: mcpOf(get(update, 'rawInput')) ?? (baseAgent(this.provider) === 'copilot' ? copilotMcpOf(update) : null),
-        echo: !main || isStr(parent) ? toolEcho(update) : null,
-      };
-      this.#tools.set(id, seen);
-      while (this.#tools.size > 300) this.#tools.delete(this.#tools.keys().next().value!);
-      if (shell) {
-        if (!this.#shellCalls.has(id)) this.#shellCalls.set(id, seen.since);
-        while (this.#shellCalls.size > 200) this.#shellCalls.delete(this.#shellCalls.keys().next().value!);
-      }
-    }
-    const status = get(update, 'status');
-    if (seen && isStr(status)) seen.status = status;
-    // Subagent worktrees (P2): the main agent's Agent / SendMessage / TaskStop calls, from the stream the agent can't forge
-    const named = seen?.toolName ?? (isStr(toolName) ? toolName : null);
-    if (main && this.onClaudeTool && named && CLAUDE_SUBAGENT_TOOLS.has(named) && !seen?.parent) {
-      const raw = get(update, 'rawInput');
-      try {
-        const response = isDict(claude) ? get(claude, 'toolResponse') : null;
-        const agentId = isDict(response) ? get(response, 'agentId') : null;
-        this.onClaudeTool(this, named, id, isDict(raw) ? raw : {}, isStr(status) ? status : '', isStr(agentId) ? agentId : '');
-      } catch (error) {
-        log.exception(error, 'onClaudeTool failed');
-      }
-    }
-    const delegating = /^Delegating to agent/.test(String(get(update, 'title') ?? ''));
-    if (main && this.onGeminiTool && isStr(status) && (this.#geminiCalls.has(id) || id.startsWith('invoke_agent') || delegating)) {
-      this.#geminiCalls.add(id); // its later updates may carry another title (an error's)
-      while (this.#geminiCalls.size > 100) this.#geminiCalls.delete(this.#geminiCalls.values().next().value!);
-      const title = get(update, 'title');
-      try {
-        this.onGeminiTool(this, id, isStr(title) ? title : '', status);
-      } catch (error) {
-        log.exception(error, 'onGeminiTool failed');
-      }
-    }
-    if (kind !== 'tool_call_update') return;
-    const background = this.#bgTools.get(id);
-    if (background) {
-      // Codex: the command's completed update comes after the turn.
-      if (background.state === 'running' && toolEnded(update, this.#claudeHolds())) this.#backgroundEnded(id, background, 'done');
-      return;
-    }
-    const task = backgroundTask(update, this.#claudeHolds());
-    if (task) this.#markBackground(id, task);
-    if (seen?.shell && this.queue.steer.length && (task || toolEnded(update, this.#claudeHolds()))) void this.#steerPump();
-  }
-
-  /**
-   * The tool `id` went on running in the background as `task`. Notes the agent's processes that started with the command: not there
-   * when the turn began, and not older than its tool call (two seconds of slack for ps's whole-second start times). An older one (an
-   * MCP server, the PowerShell tool's own shell) is not it. None: the command already ended. A process of unknown age counts as
-   * running (never cut one off) but makes Stop unavailable. Stop is offered only for a shell command whose processes cannot belong
-   * to another command (no other shell command running, none started since this one) and whose start times are known.
-   */
-  #markBackground(id: string, task: string, onlyIfRunning = false): void {
-    try {
-      this.onBackgroundTask?.(this, task, id);
-    } catch (error) {
-      log.exception(error, 'onBackgroundTask failed');
-    }
-    if (this.#bgShells.has(task) || this.#bgTools.has(id)) return;
-    const since = this.#shellCalls.get(id) ?? this.#tools.get(id)?.since ?? this.#now() - 10;
-    const now = this.#descendants(true); // the command started a moment ago: a snapshot from before it would not have it
-    const before = this.#turnProcesses;
-    const commandOf = (list: Descendant[] | null) => {
-      const turn = this.#turnProcesses ?? before; // a WSL turn's own snapshot may have come in meanwhile
-      const mine = list ? list.filter((d) => !turn?.has(d.pid) && (d.started === null || d.started >= since - 2)) : null;
-      const taken = new Set([...this.#bgTools.values()].filter((t) => t.state === 'running').flatMap((t) => t.procs ?? []).map((p) => p.pid));
-      return mine ? mine.filter((d) => !taken.has(d.pid)) : null;
-    };
-    const pids = commandOf(now);
-    const at = this.#now();
-    const shell = this.#tools.get(id)?.shell ?? this.#shellCalls.has(id);
-    const others = () =>
-      [...this.#tools].some(([other, t]) =>
-        other !== id && t.shell &&
-        (t.since >= since - 2 || !['completed', 'failed'].includes(t.status) || this.#bgTools.get(other)?.state === 'running')
-      );
-    if (this.wsl && pids === null) {
-      // A WSL chat's snapshot comes a moment later from its distro: until then the command counts as running (pids unknown) and has
-      // no Stop; then its processes are noted (Stop offered on the same terms as on Windows, `others` asked again: a shell call
-      // started meanwhile would share the snapshot), or, with none, it is done (as when a Windows snapshot finds none).
-      this.#afterWslTree((later) => {
-        const found = commandOf(later);
-        const t = this.#bgTools.get(id);
-        if (found === null || this.#bgShells.get(task) !== null || t?.state !== 'running') return;
-        if (!found.length) return this.#backgroundEnded(id, t, 'done');
-        this.#bgShells.set(task, found.map((d) => d.pid));
-        if (shell && this.#turnProcesses !== null && found.every((d) => d.started !== null) && !others()) {
-          t.procs = found.map((d) => ({ pid: d.pid, started: d.started as number }));
-          t.stoppable = true;
-          this.#announceBackground(id);
-        }
-        log.info('chat %s: background tool %s runs as processes %s%s', this.id, id, found.map((d) => d.pid).join(', '), t.stoppable ? '' : ', no Stop');
-      });
-    }
-    if (pids && !pids.length) {
-      if (onlyIfRunning) return;
-      this.#bgTools.set(id, { task, state: 'done', procs: null, stoppable: false, since, at, endedAt: at });
-      this.#trimBackground();
-      this.#announceBackground(id);
-      return;
-    }
-    this.#bgShells.set(task, pids ? pids.map((d) => d.pid) : null);
-    this.#shellSince.set(task, at);
-    this.#shellsSeen = null;
-    while (this.#bgShells.size > 100) this.#bgShells.delete(this.#bgShells.keys().next().value!);
-    const known = pids !== null && before !== null && pids.every((d) => d.started !== null);
-    const stoppable = shell && known && !others();
-    const procs = stoppable ? pids!.map((d) => ({ pid: d.pid, started: d.started as number })) : null;
-    this.#bgTools.set(id, { task, state: 'running', procs, stoppable, since, at, endedAt: null });
-    this.#trimBackground();
-    this.#announceBackground(id);
-    log.info(
-      'chat %s: tool %s went to the background as %s (%s%s)',
-      this.id,
-      id,
-      task,
-      pids ? `processes ${pids.map((d) => d.pid).join(', ')}` : 'processes unknown',
-      stoppable ? '' : ', no Stop',
-    );
-  }
-
-  /**
-   * Claude Code helpers (recording C2): a steer moves a foreground helper to the background, and the adapter says so in the main
-   * session with a session_message `<toolUseId>:reply` from the helper's session, "Async agent launched successfully". Its row (the
-   * Agent tool call, and the helper's card in the Activity pane) is marked running in the background, without Stop; it is done once
-   * the helper's subagent_update leaves running.
-   */
-  #watchHelper(update: Json, kind: unknown, main: boolean): void {
-    if (kind === 'subagent_update') {
-      const child = get(update, 'sessionId');
-      let state = get(update, 'state');
-      state = isDict(state) ? get(state, 'state') : state;
-      if (!isStr(child) || !isStr(state) || state === 'running' || state === 'requires_action') return;
-      for (const [id, t] of this.#bgTools) {
-        if (t.helper === child && t.state === 'running') this.#backgroundEnded(id, t, 'done');
-      }
-      return;
-    }
-    if (!main) return;
-    const messageId = get(update, 'messageId');
-    const sender = get(update, 'senderSessionId');
-    if (!isStr(messageId) || !messageId.endsWith(':reply') || !isStr(sender) || sender === this.sessionId) return;
-    const content = get(update, 'content');
-    const text = (Array.isArray(content) ? content : []).map((b) => (isDict(b) && isStr(b.text) ? b.text : '')).join('');
-    if (!HELPER_BACKGROUND_TEXT.test(text)) return;
-    const id = messageId.slice(0, -':reply'.length);
-    if (!id || this.#bgTools.has(id) || !this.#liveHelpers.has(sender)) return;
-    const at = this.#now();
-    this.#bgTools.set(id, {
-      task: `helper:${sender}`,
-      state: 'running',
-      procs: null,
-      stoppable: false,
-      since: this.#tools.get(id)?.since ?? at,
-      at,
-      endedAt: null,
-      helper: sender,
-    });
-    this.#trimBackground();
-    this.#announceBackground(id);
-    log.info('chat %s: helper %s (%s) went on in the background', this.id, sender, id);
-  }
-
-  /**
-   * The page reads a tool row's background state from the row's updates (`update.background = {state, stoppable}`): each change is
-   * a tool_call_update of AIB's own for that row. A recorded event (keeper note), so a rebuild has it in the same place; never made
-   * while replaying (the note brings it back).
-   */
-  #announceBackground(id: string): void {
-    const t = this.#bgTools.get(id);
-    if (!t || this.#replaying) return;
-    this.recordedEvent('update', {
-      sessionId: this.sessionId,
-      update: {
-        sessionUpdate: 'tool_call_update',
-        toolCallId: id,
-        ...(this.#tools.get(id)?.echo ?? {}),
-        background: {
-          state: t.state,
-          stoppable: t.state === 'running' && t.stoppable && !this.closed,
-          ...(t.helper ? { helper: t.helper } : {}),
-        },
-      },
-    });
-  }
-
-  #trimBackground(): void {
-    while (this.#bgTools.size > 100) this.#bgTools.delete(this.#bgTools.keys().next().value!);
-  }
-
-  #backgroundEnded(id: string, background: BackgroundTool, state: 'done' | 'stopped'): void {
-    background.state = state;
-    background.endedAt = this.#now();
-    this.#bgShells.delete(background.task);
-    log.info('chat %s: background tool %s %s', this.id, id, state === 'done' ? 'ended' : 'was stopped');
-    this.#announceBackground(id);
-  }
-
-  /**
-   * Codex keeps running a command past its turn's end (recording X1): an execute tool of the main session still open when the turn
-   * ends, whose processes still run, is a background command from then on (its completed update comes later, with no new turn).
-   */
-  #backgroundOpenTools(seq: number): void {
-    if (this.#claudeHolds()) return; // Claude Code says so itself (backgroundTaskId); its turn never ends with a tool open
-    for (const [id, seen] of [...this.#tools]) {
-      if (seen.turn !== seq || !seen.main || !seen.shell || this.#bgTools.has(id)) continue;
-      if (seen.status === 'completed' || seen.status === 'failed') continue;
-      this.#markBackground(id, `open:${id}`, true);
-    }
-  }
-
-  /** The background tools as the page sees them (snapshot `toolBackground`): {toolCallId: {state, stoppable}}. */
-  toolBackground(): Record<string, { state: string; stoppable: boolean; helper?: string }> {
-    if (!this.#bgTools.size) return {};
-    this.backgroundShellsRunning(); // drops shells whose processes ended
-    const out: Record<string, { state: string; stoppable: boolean; helper?: string }> = {};
-    for (const [id, t] of this.#bgTools) {
-      if (t.helper) {
-        // a helper ends with its subagent_update; one AIB no longer counts as live (an agent restart) is over too
-        if (t.state === 'running' && (this.closed || !this.#liveHelpers.has(t.helper))) this.#backgroundEnded(id, t, 'done');
-      } else if (t.state === 'running' && !this.#bgShells.has(t.task)) this.#backgroundEnded(id, t, 'done');
-      out[id] = { state: t.state, stoppable: t.state === 'running' && t.stoppable && !this.closed, ...(t.helper ? { helper: t.helper } : {}) };
-    }
-    return out;
-  }
-
-  /**
-   * Stop a command running in the background (POST /api/live/tool-stop): AIB kills the processes it noted when the command moved
-   * there, re-verified now (still the agent's, same start time) together with what they started since, leaf first
-   * (platform/kill_verified.ts; a WSL chat's in its distro: helper `proc.stop`). Refused (NotStoppable, HTTP 409) for anything else:
-   * an MCP tool, a command whose processes could not be told apart, one that already ended. The agent learns of it on its own (Claude
-   * Code's task notification).
-   */
-  async stopBackgroundTool(toolCallId: unknown): Promise<Json> {
-    this.#refuseReadOnly();
-    const background = isStr(toolCallId) ? this.#bgTools.get(toolCallId) : undefined;
-    if (!background) throw new NotStoppable('That tool is not running in the background.');
-    this.toolBackground();
-    if (background.helper) {
-      throw new NotStoppable("AIB can't stop a subagent by itself: it runs inside the agent's own process. Ask the agent to stop it.");
-    }
-    if (background.state !== 'running') throw new NotStoppable('That command is no longer running.');
-    if (!background.stoppable || !background.procs?.length) {
-      throw new NotStoppable('AIB cannot tell which processes belong to this command, so it cannot stop it.');
-    }
-    const pid = this.process?.pid;
-    if (this.closed || !pid) throw new NotStoppable('The agent is not running.');
-    // a WSL chat's pids are the distro's: its helper runs the same verified kill there (never killVerified here, on Windows processes)
-    const result = this.wsl ? await wslKillVerified(this.wsl.distro, pid, background.procs) : await killVerified(pid, background.procs);
-    if (!result) throw new NotStoppable('AIB cannot list the processes right now. Try again.');
-    if (!result.killed.length) {
-      this.#backgroundEnded(toolCallId as string, background, 'done');
-      return { ok: true, toolCallId, state: 'done', killed: 0 };
-    }
-    this.#backgroundEnded(toolCallId as string, background, 'stopped');
-    log.info('chat %s: stopped background tool %s (processes %s)', this.id, toolCallId, result.killed.map((k) => k.pid).join(', '));
-    return { ok: true, toolCallId, state: 'stopped', killed: result.killed.length };
-  }
-
-  /** A helper started during the current prompt turn is still running (or waits for the user). */
-  #helpersRunning(): boolean {
-    for (const child of this.#turnHelpers) {
-      const state = this.subagents.get(child)?.state;
-      if (state === 'running' || state === 'requires_action') return true;
-    }
-    return false;
-  }
-
-  /** Main-session output of the running prompt turn: a steer before it was read (B13), and a pending early end is off (B1). */
-  #mainOutput(): void {
-    this.#steerTurn.outputAfter = true;
-    this.#steerTurn.unread = [];
-    this.#clearSettle();
-  }
-
-  #clearSettle(): void {
-    if (this.#settleTimer !== null) clearTimeout(this.#settleTimer);
-    this.#settleTimer = null;
-  }
-
-  /** End the held turn early once steerTiming.settleMs pass with no main-session output (which clears the timer). */
-  #armSettle(early: { seq: number; fire: () => void }): void {
-    this.#clearSettle();
-    this.#settleTimer = setTimeout(() => {
-      this.#settleTimer = null;
-      if (this.#endEarly !== early || !this.busy || this.autonomous || this.cancelSeq >= early.seq || !this.#helpersRunning()) return;
-      this.#endEarly = null;
-      early.fire();
-    }, steerTiming.settleMs);
-  }
-
-  /**
-   * One session/update seen (after it is recorded): ends a prompt turn whose reply ended while its helpers still run, and shows a
-   * cycle Claude Code started on its own as working until its result. Same on a rebuild from the keeper's record, which replays the
-   * same lines. Returns a promise when the turn's end must be handled before the next line is read.
-   */
-  #watchHeldTurn(params: Json): Promise<void> | void {
-    if (!this.ready || this.closed || !this.#claudeHolds()) return;
-    const update = get(params, 'update');
-    if (!isDict(update)) return;
-    const kind = get(update, 'sessionUpdate');
-    if (kind === 'subagent_update') {
-      const child = get(update, 'sessionId');
-      let state = get(update, 'state');
-      state = isDict(state) ? get(state, 'state') : state;
-      const live = state === 'running' || state === 'requires_action';
-      if (isStr(child) && live && this.busy && !this.autonomous) {
-        this.#turnHelpers.add(child);
-      }
-      if (isStr(child) && live) {
-        this.#liveHelpers.add(child);
-        if (!this.#helperSince.has(child)) this.#helperSince.set(child, this.#now());
-      } else if (isStr(child) && isStr(state)) {
-        const had = this.#liveHelpers.size;
-        this.#liveHelpers.delete(child);
-        this.#helperSince.delete(child);
-        if (had && !this.#liveHelpers.size) this.#workEndedAt = this.#now(); // the follow-up window starts (inbox-rules.js)
-      }
-      return;
-    }
-    if (get(params, 'sessionId') !== this.sessionId) return; // a subagent's own updates
-    const meta = get(update, '_meta');
-    if (kind === 'usage_update') {
-      const origin = isDict(meta) ? get(meta, '_claude/origin') : null;
-      if (!isDict(origin)) return; // usage during the turn, not a result
-      if (get(origin, 'kind') === 'task-notification') {
-        // A background task ended: one shell whose processes could not be listed stops counting (the others are read from the OS).
-        const unknown = [...this.#bgShells].find(([, pids]) => pids === null);
-        if (unknown) this.#bgShells.delete(unknown[0]);
-        // ...and a row marked running in the background whose processes are gone is done now, not at the next snapshot (the process
-        // list is cached for a second): Claude Code sends nothing else for the command (recording C1); a WSL chat's, once its
-        // distro answered
-        if (this.wsl) this.#afterWslTree(() => this.toolBackground());
-        else refreshDescendants();
-        this.toolBackground();
-      }
-      if (this.autonomous) return this.#endAutonomous('end_turn');
-      const early = this.#endEarly;
-      if (
-        early && this.busy && !AUTONOMOUS_ORIGINS.has(get(origin, 'kind') as string) && this.cancelSeq < early.seq &&
-        this.#helpersRunning()
-      ) {
-        // B1: a steer interrupts the running cycle, which then ends with a result of its own; the steered message's reply comes
-        // after it (in the same cycle, or a cycle of its own, recording C4). So with a steer in this turn, only a result after
-        // main-session output that came after the last steer can end the turn early, and only once no more output follows for a
-        // moment. A human result is never a turn end by itself.
-        if (this.#steerTurn.injected) {
-          if (this.#steerTurn.outputAfter) this.#armSettle(early);
-          return;
-        }
-        this.#endEarly = null;
-        early.fire();
-        return new Promise((resolve) => setTimeout(resolve, 0)); // the turn's end is recorded before what comes after it
-      }
-      return;
-    }
-    // Claude Code's own cycle: model output of the main conversation while no prompt runs.
-    if (
-      !this.busy && (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'tool_call') &&
-      !(isDict(meta) && isDict(get(meta, 'claudeCode')) && get(get(meta, 'claudeCode') as Json, 'parentToolUseId'))
-    ) {
-      this.autonomous = true;
-      this.busy = true;
-      this.turnStartedAt = now();
-      this.error = '';
-    }
-  }
-
-  /** Claude Code's own cycle ended (its result came, or it was stopped): the chat is idle again and the queue goes on. */
-  #endAutonomous(stopReason: string): Promise<void> {
-    this.autonomous = false;
-    this.turnEndedAt = this.#now();
-    if (stopReason !== 'cancelled') this.#noteAsks();
-    const result = { stopReason };
-    this.#queueNoteOutcome(result, false);
-    this.event('turn_end', result);
-    const done = (async () => {
-      const hook = this.onTurnEnd;
-      if (hook && !this.#replaying && stopReason !== 'cancelled') {
-        try {
-          await hook(this);
-        } catch (error) {
-          log.exception(error, 'on_turn_end hook failed');
-        }
-      }
-      if (this.onTurnCancelled && !this.#replaying && stopReason === 'cancelled') {
-        await Promise.resolve(this.onTurnCancelled(this)).catch((error) => log.exception(error, 'on_turn_cancelled hook failed'));
-      }
-      await this.#finishTurn();
-      await this.#queueAfterTurn();
-      if (!this.#replaying) this.#scheduleSnapshot();
-    })().catch((error) => log.exception(error, 'Ending a cycle the agent started on its own failed'));
-    this.turn = done;
-    return new Promise((resolve) => setTimeout(resolve, 0));
-  }
-
-  /** One JSON-RPC message to the agent. Writes go out in call order; throws when the agent's stdin is known to be gone. */
-  write(message: unknown, once?: string): void {
-    if (this.channel) {
-      if (this.#stdinClosed) throw new ValueError('I/O operation on closed file.');
-      if (this.#stdinBroken) throw new BrokenPipeError('[Errno 32] Broken pipe');
-      if (this.rebuildError) return; // read-only: nothing reaches the agent from here
-      const key = once ?? this.#onceKey(message as Json);
-      if (this.#replaying) {
-        this.#held.push({ message: message as Json, once: key });
-        return;
-      }
-      void this.channel.write(ENCODER.encode(JSON.stringify(message) + '\n'), key);
-      return;
-    }
-    const writer = this.#stdin;
-    if (writer === null || this.#stdinClosed) {
-      throw new ValueError('I/O operation on closed file.');
-    }
-    if (this.#stdinBroken) throw new BrokenPipeError('[Errno 32] Broken pipe');
-    writer.write(ENCODER.encode(JSON.stringify(message) + '\n')).catch(() => {
-      this.#stdinBroken = true;
-    });
-  }
-
-  /**
-   * The once-key a keeper write carries, so it can never reach the agent twice (a later AIB that resends it is refused): answers
-   * by the agent's request id, requests by our id, a cancel by turn.
-   */
-  #onceKey(message: Json): string | undefined {
-    if (!isDict(message)) return undefined;
-    if (!Object.hasOwn(message, 'method')) {
-      if (!Object.hasOwn(message, 'id')) return undefined;
-      const id = JSON.stringify(message.id); // agents may reuse a request id in a later turn: the key counts its uses
-      return `resp:${id}:${this.#requestsSeen.get(id) ?? 0}`;
-    }
-    if (Object.hasOwn(message, 'id')) return `req:${JSON.stringify(message.id)}`;
-    if (message.method === 'session/cancel') {
-      return `cancel:${JSON.stringify(get(get(message, 'params', {}) as Json, 'sessionId'))}:${this.promptSeq}`;
-    }
-    return undefined;
-  }
-
-  async request(
-    method: string,
-    params: unknown,
-    timeout = 30,
-    options: { once?: string; note?: (id: number) => Json | null } = {},
-  ): Promise<unknown> {
-    if (method === 'initialize') params = augmentInitialize(params as Json);
-    this.counter += 1;
-    const key = this.counter;
-    const entry: Pending = { done: new ThreadEvent(), method, params };
-    this.pending.set(key, entry);
-    try {
-      const note = this.channel && options.note ? options.note(key) : null;
-      if (note) void this.channel!.sendNote(note); // goes out before the write: the record says what it is first
-      this.write({ jsonrpc: '2.0', id: key, method, params }, options.once);
-      if (!(await entry.done.wait(timeout * 1000))) {
-        throw new TimeoutError(
-          `${method} did not respond within ${timeout} seconds`,
-        );
-      }
-      return Connection.#result(entry.response!);
-    } finally {
-      this.pending.delete(key);
-    }
-  }
-
-  static #result(result: Json): unknown {
+  static $result(result: Json): unknown {
     if (Object.hasOwn(result, 'error')) {
       const error = result.error;
       const failure = new RuntimeError(
@@ -3999,931 +886,27 @@ export class Connection {
     return Object.hasOwn(result, 'result') ? result.result : {};
   }
 
-  /** A request the old AIB sent (rebuilt from the record): wait for its response, which comes from the record or live. */
-  async #awaitReplayed(entry: Pending, id: unknown): Promise<unknown> {
-    try {
-      await entry.done.wait();
-      return Connection.#result(entry.response!);
-    } finally {
-      if (this.pending.get(id) === entry) this.pending.delete(id);
-    }
-  }
-
-  #pushStderr(line: string): void {
-    this.stderr.push(line);
-    while (this.stderr.length > 30) this.stderr.shift();
-  }
-
-  async #readErrors(stream: ReadableStream<Uint8Array>): Promise<void> {
-    const lines = new PyTextLines();
-    const reader = this.#stderrReader = stream.getReader();
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        for (const line of lines.feed(value)) {
-          this.#pushStderr(clip(line.replace(RSTRIP, ''), 2000));
-        }
-      }
-      for (const line of lines.feed(null, true)) {
-        this.#pushStderr(clip(line.replace(RSTRIP, ''), 2000));
-      }
-    } catch {
-      /* the pipe went away: just stop */
-    } finally {
-      reader.releaseLock();
-    }
-  }
-
-  async #read(stream: ReadableStream<Uint8Array>): Promise<void> {
-    let failure = '';
-    const lines = new PyTextLines();
-    const reader = this.#stdoutReader = stream.getReader();
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        for (const line of lines.feed(value)) {
-          const pending = this.#handleLine(line);
-          if (pending) await pending;
-        }
-      }
-      for (const line of lines.feed(null, true)) {
-        const pending = this.#handleLine(line);
-        if (pending) await pending;
-      }
-    } catch (error) {
-      if (isOsOrValueError(error)) this.error = errorText(error);
-      else {
-        failure = this.#internalFailure(error);
-        try {
-          await reader.cancel();
-        } catch { /* already gone */ }
-      }
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch { /* a read is still pending (close() cancels it) */ }
-      this.#readerEnded(failure);
-    }
-  }
-
-  /** A bug in one of our handlers must not leave a half-working connection behind: say what happened, then stop the agent. */
-  #internalFailure(error: unknown): string {
-    log.exception(
-      error,
-      'Internal error while reading from the agent; closing the connection',
-    );
-    const name = errorName(error);
-    const message = errorText(error);
-    const frames = error instanceof Error && error.stack ? error.stack.split(/\r?\n/).slice(1).map((l) => l.trim()).reverse() : [];
-    const trace = [
-      'Traceback (most recent call last):',
-      ...frames,
-      `${name}: ${message}`,
-    ].join('\n');
-    this.traceback = trace;
-    for (const line of trace.split('\n').slice(-12)) {
-      this.#pushStderr(clip(line, 2000));
-    }
-    const failure =
-      `AIB hit an internal error while reading from the agent (${name}: ${message}). The connection was closed; reconnect to continue.`;
-    this.error = failure;
-    try {
-      this.tree?.kill();
-    } catch (killError) {
-      log.exception(killError, 'Killing the agent process tree failed');
-    }
-    return failure;
-  }
-
-  /** The agent's output ended (it exited, the pipe broke, or the keeper went away): the connection is closed. Runs once. */
-  #readerEnded(failure: string): void {
-    if (this.#ended) return;
-    this.#ended = true;
-    try {
-      // S1: the agent's output ended while a turn ran, and nobody pressed Stop or closed the chat (close() sets #closing first)
-      const turn = this.autonomous || this.cancelSeq < this.promptSeq;
-      if (this.busy && turn && !this.#closing && !this.#replaying) this.#stall = { at: this.#now(), kind: 'died', step: this.#lastStep };
-      this.closed = true;
-      if (this.closedAt === null) this.closedAt = now();
-      this.ready = false;
-      this.busy = false;
-      this.permissions.clear();
-      this.pendingChanges.clear();
-      this.#clearElicitations({});
-      const message = failure ||
-        'ACP connection closed. ' + this.stderr.slice(-3).join('\n');
-      for (const entry of this.pending.values()) {
-        // An answer that already arrived is kept.
-        if (entry.done.isSet()) continue;
-        entry.response = { error: { message } };
-        entry.done.set();
-      }
-      this.releaseLease();
-      this.#shutdownCaps();
-      this.event('disconnected', {
-        message: this.error || 'Agent connection closed',
-      });
-      // the chat ended (its agent exited, the keeper was lost): its store is written to the end and closed, and kept
-      if (!this.#replaying) void this.#historyFinish();
-    } finally {
-      this.#endedResolve?.();
-      this.#settleRebuild?.[0](); // ended during the rebuild: the caller sees it closed
-      this.#settleRebuild = null;
-    }
-  }
-
-  /** One stdout line, handled before the next is read. Returns a promise when the next line must wait (a reply, a capability call). */
-  #handleLine(line: string): Promise<void> | void {
-    const message = screen(this, line) as Json | null;
-    if (message === null) return;
-    // AIB's cookie prefix on a subagent's shell command is AIB's, not the agent's: everything below (the allow gate, the approval card, Activity,
-    // history, notifications) sees the command the agent meant (allow/aib_prefix.ts). The cheap text test keeps every other line untouched.
-    if (line.includes('AIB_PROC=')) stripAibMessage(message, this.id);
-    if (!Object.hasOwn(message, 'method')) {
-      const waiting = this.pending.get(get(message, 'id'));
-      if (waiting) {
-        waiting.response = message;
-        waiting.done.set();
-        // Let the caller that waited on this reply run before the next line is read, so the waiter wakes at once:
-        // a repeated reply then finds no pending request, and a turn's end is recorded before what the agent sent after it.
-        return new Promise((resolve) => setTimeout(resolve, 0));
-      }
-      return;
-    }
-    const method = message.method as string;
-    const params = get(message, 'params', {}) as Json;
-    if (Object.hasOwn(message, 'id')) {
-      const seenKey = JSON.stringify(message.id);
-      this.#requestsSeen.set(seenKey, (this.#requestsSeen.get(seenKey) ?? 0) + 1);
-      if (
-        method === 'session/request_permission' && this.ownArtifactTool(params)
-      ) {
-        // AIB's own artifact tool only publishes into this chat; never make the user approve it.
-        const options = get(params, 'options', []);
-        const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
-        if (allow && isStr(allow.optionId)) {
-          this.write({
-            jsonrpc: '2.0',
-            id: message.id,
-            result: {
-              outcome: { outcome: 'selected', optionId: allow.optionId },
-            },
-          });
-          return;
-        }
-      }
-      // kill by name is refused for every agent (allow/kill_by_name.ts): the fallback for an agent without a hook, or with hooks off
-      if (method === 'session/request_permission' && !this.#replaying && permissionKillsByName(params)) {
-        const options = get(params, 'options', []);
-        const no = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'reject_once') as Json | undefined;
-        this.write({
-          jsonrpc: '2.0',
-          id: message.id,
-          result: { outcome: no && isStr(no.optionId) ? { outcome: 'selected', optionId: no.optionId } : { outcome: 'cancelled' } },
-        });
-        this.recordedEvent('studio_note', { message: `AIB refused a command that kills processes by name: ${KILL_BY_NAME_REASON}`, sessionId: this.sessionId });
-        return;
-      }
-      // a WSL chat: the distro facts the matcher needs are fetched first (allow/wsl_facts.ts); the next line waits for it
-      if (method === 'session/request_permission' && this.allowGate && this.wsl && !this.#replaying) {
-        return this.#allowByRuleWsl(message, params, seenKey);
-      }
-      if (method === 'session/request_permission' && this.allowGate && this.#allowByRule(message, params, seenKey)) return;
-      if (method === 'session/request_permission') {
-        this.#permissionCard(message, params);
-      } else if (this.caps.handles(method)) {
-        if (this.#replaying) { // answered once live, unless the record shows the old AIB answered it
-          this.#deferred.push(message);
-          return;
-        }
-        const answered = this.#dispatchCaps(message);
-        // terminal/wait_for_exit can take as long as the command runs: answered on its own. Everything
-        // else is answered before the next line is read.
-        if (method !== 'terminal/wait_for_exit') return answered;
-        answered?.catch((error) => log.exception(error, 'Client capability request failed'));
-      } else if (method === 'elicitation/create') {
-        try {
-          this.receiveElicitation(message.id, params);
-        } catch (error) {
-          if (
-            !(error instanceof Error) ||
-            !['ValueError', 'TypeError', 'KeyError'].includes(error.name)
-          ) throw error;
-          this.write({
-            jsonrpc: '2.0',
-            id: message.id,
-            error: { code: -32602, message: errorText(error) },
-          });
-        }
-      } else {
-        this.write({
-          jsonrpc: '2.0',
-          id: message.id,
-          error: {
-            code: -32601,
-            message: `Client capability not advertised: ${method}`,
-          },
-        });
-      }
-    } else if (method === 'session/update') {
-      if (this.#reload) { // the history a session/load after a hand-off sends: #reattach shows only the outside turns
-        if (!this.#reload.discard) this.#reload.window.push(params); // the newest updates (bounded): the outside turns are at the end
-        return;
-      }
-      this.#noteUserText(params);
-      const update = get(params, 'update', {}) as Json;
-      const sid = get(params, 'sessionId');
-      if (isStr(sid) && sid) this.knownSessions.add(sid);
-      // Some agents report subagent session IDs in update payloads.
-      for (const name of ['subagentSessionId', 'childSessionId']) {
-        const child = pget(update, name);
-        if (isStr(child) && child) this.knownSessions.add(child);
-      }
-      const subagent = get(update, 'subagent');
-      if (isDict(subagent) && isStr(subagent.sessionId) && subagent.sessionId) {
-        this.knownSessions.add(subagent.sessionId);
-      }
-      if (this.sessionId === null || sid === null || sid === this.sessionId) {
-        applyUpdate(this.breadth, update, this.#now());
-        const meta = get(update, 'sessionUpdate') === 'usage_update' ? get(update, '_meta') : null;
-        if (isDict(meta) && isDict(meta['_claude/rateLimit'])) {
-          this.onLimits?.(this, 'claude-rate-limit', meta['_claude/rateLimit'], this.#now());
-        }
-      }
-      // The chat's own settings only: a subagent's session reports its own config (claude-agent-acp: the helper's model, mode,
-      // effort and agent type), which must not replace the chat's.
-      const own = this.sessionId === null || sid === null || sid === this.sessionId;
-      if (own && get(update, 'sessionUpdate') === 'config_option_update') {
-        this.settings.configOptions = get(update, 'configOptions', []);
-        this.#withModels(this.settings); // an agent's models list stays offered as the model option
-      }
-      if (own && get(update, 'sessionUpdate') === 'current_mode_update') {
-        this.#modes().currentModeId = get(update, 'currentModeId');
-      }
-      this.writes.observe(params);
-      const done = this.writes.finished(params);
-      if (done.length) this.onWritesDone?.(this, done);
-      if (this.#merger && !this.ready) this.#mergeReplayed(params);
-      this.event('update', params);
-      this.#watchTools(params);
-      return this.#watchHeldTurn(params);
-    } else if (method === 'elicitation/complete') {
-      this.completeElicitation(params);
-    } else if (method === '$/cancel_request') {
-      this.cancelIncomingRequest(
-        isDict(params) ? get(params, 'requestId') : null,
-      );
-    } else {
-      this.event('notice', { method, params });
-    }
-  }
-
-  /** self.settings.setdefault('modes', {}): a non-dict value fails as item assignment does. */
-  #modes(): Json {
-    if (!Object.hasOwn(this.settings, 'modes')) this.settings.modes = {};
-    const modes = this.settings.modes;
-    if (!isDict(modes)) {
-      throw new TypeError(
-        `'${pyTypeName(modes)}' object does not support item assignment`,
-      );
-    }
-    return modes;
-  }
-
-  /** Kill the agent's client terminals; never throws. */
-  #shutdownCaps(): Promise<void> {
-    try {
-      return Promise.resolve(this.caps.shutdown()).catch((error) => log.exception(error, 'Stopping client terminals failed'));
-    } catch (error) {
-      log.exception(error, 'Stopping client terminals failed');
-      return Promise.resolve();
-    }
-  }
-
-  releaseLease(): void {
-    const lease = this.sessionLease;
-    this.sessionLease = null;
-    if (lease) lease.release();
-    const hook = this.onRelease;
-    if (hook) {
-      try {
-        const result = hook(this);
-        if (result instanceof Promise) {
-          result.catch((error) => log.exception(error, 'on_release hook failed'));
-        }
-      } catch (error) {
-        log.exception(error, 'on_release hook failed');
-      }
-    }
-  }
-
-  #pausedForUser(): boolean {
-    return !!(this.elicitations.size || this.permissions.size ||
-      (this.auth && !this.auth.working));
-  }
-
-  /** Like request(), but the timeout clock stops while a person is being asked something. */
-  async setupRequest(
-    method: string,
-    params: unknown,
-    timeout: number,
-  ): Promise<unknown> {
-    if (method === 'initialize') params = augmentInitialize(params as Json);
-    this.counter += 1;
-    const key = this.counter;
-    const entry: Pending = { done: new ThreadEvent(), method, params };
-    this.pending.set(key, entry);
-    try {
-      this.write({ jsonrpc: '2.0', id: key, method, params });
-      let waited = 0;
-      while (!(await entry.done.wait(250))) {
-        if (!this.#pausedForUser()) waited += 0.25;
-        if (waited >= timeout) {
-          throw new TimeoutError(
-            `${method} did not respond within ${timeout} seconds`,
-          );
-        }
-      }
-      const response = entry.response!;
-      if (Object.hasOwn(response, 'error')) throw new RpcError(response.error);
-      return Object.hasOwn(response, 'result') ? response.result : {};
-    } finally {
-      this.pending.delete(key);
-    }
-  }
-
-  #checkSetupAbort(): void {
-    if (this.setupAbort) throw new ValueError(this.setupAbort);
-  }
-
-  /** Fail connection setup now (e.g. the person declined a setup question). */
-  abortSetup(message: string): void {
-    this.setupAbort = this.setupAbort || message;
-    for (const entry of [...this.pending.values()]) {
-      if (!entry.done.isSet()) {
-        entry.response = { error: { message, code: null } };
-        entry.done.set();
-      }
-    }
-    this.authResponse = ['cancel', null];
-    this.authEvent.set();
-  }
-
-  async #setupSessionCall(method: string, params: Json): Promise<unknown> {
-    for (let attempt = 0; attempt < 4; attempt++) {
-      try {
-        const result = await this.setupRequest(method, params, 90);
-        this.#checkSetupAbort();
-        return result;
-      } catch (error) {
-        if (!(error instanceof RpcError)) throw error;
-        this.#checkSetupAbort();
-        if (!isAuthRequired(error)) throw error;
-        if (attempt === 3) {
-          throw new ValueError(
-            'The agent still reports that sign-in is required. ' +
-              error.message,
-          );
-        }
-        await this.#awaitAuth(error);
-      }
-    }
-    throw new ValueError('Sign-in did not complete');
-  }
-
-  /** Hold connection setup until the person signs in, retries, or cancels. */
-  async #awaitAuth(error: RpcError): Promise<void> {
-    const auth: AuthState = {
-      methods: [...this.authMethods],
-      message: clip(error.message, 500),
-      error: '',
-      working: false,
-    };
-    this.auth = auth;
-    this.authResponse = null;
-    this.authEvent.clear();
-    this.event('auth_required', {
-      methods: auth.methods,
-      message: auth.message,
-    });
-    const deadline = now() + 1800;
-    try {
-      while (true) {
-        if (!(await this.authEvent.wait(250))) {
-          if (this.closed) {
-            throw new RuntimeError(
-              'The agent disconnected while waiting for sign-in',
-            );
-          }
-          if (now() > deadline) {
-            throw new ValueError(
-              'Sign-in timed out. The conversation was not opened.',
-            );
-          }
-          continue;
-        }
-        this.authEvent.clear();
-        this.#checkSetupAbort();
-        const [action, methodId] = this.authResponse ?? ['cancel', null];
-        if (action === 'cancel') {
-          throw new ValueError(
-            'Sign-in was cancelled, so the conversation was not opened.',
-          );
-        }
-        if (action === 'retry') return;
-        auth.working = true;
-        auth.error = '';
-        try {
-          await this.setupRequest('authenticate', this.authenticateParams(methodId), 120);
-          this.#checkSetupAbort();
-          return;
-        } catch (failure) {
-          if (
-            !(failure instanceof RpcError) && !(failure instanceof TimeoutError)
-          ) throw failure;
-          this.#checkSetupAbort();
-          if (this.closed) throw failure;
-          auth.working = false;
-          auth.error = 'Sign-in failed: ' + clip(failure.message, 300);
-        }
-      }
-    } finally {
-      this.auth = null;
-    }
-  }
-
-  /**
-   * The params of ACP uthenticate. A Beta agent whose API key method takes the key in _meta['api-key'] (Gemini) gets the key AIB
-   * passes in its environment (Settings > AIB Linking > Beta agents); every other method is just {methodId}.
-   */
-  authenticateParams(methodId: unknown): Json {
-    const params: Json = { methodId };
-    const agent = betaAgent(this.provider);
-    const keyEnv = agent?.signin.keyEnv;
-    const key = keyEnv && this.env ? this.env[keyEnv] : '';
-    if (agent && key && agent.signin.keyMethod && agent.signin.keyMethod === methodId) params._meta = { 'api-key': key };
-    return params;
-  }
-
-  /**
-   * Beta agents whose session/new reports a model they do not use until the client sets one (GitHub Copilot CLI, github/copilot-cli#5363):
-   * right after session/new (and the New chat picks), set the model explicitly to the one the agent reports, through its model config
-   * option, else through session/set_model (the models shape). A refusal is logged, never thrown: the chat still opens. True = sent.
-   */
-  async applyModelQuirk(): Promise<boolean> {
-    if (!betaAgent(this.provider)?.setModelAfterNew || !this.sessionId) return false;
-    try {
-      const option = findPickOption(this.settings, 'model');
-      if (option && isStr(option.currentValue) && option.currentValue) {
-        await this.setConfig(option.id, option.currentValue);
-        return true;
-      }
-      const models = isDict(this.settings.models) ? this.settings.models as Json : null;
-      const current = models && isStr(models.currentModelId) ? models.currentModelId : '';
-      if (current) {
-        await this.request('session/set_model', { sessionId: this.sessionId, modelId: current });
-        return true;
-      }
-    } catch (error) {
-      log.warning('Setting the model of %s after session/new failed: %s', this.provider, errorText(error));
-    }
-    return false;
-  }
-
-  /** The agent's own words of the current turn (its message chunks since the last user message), clipped; '' when none. */
-  #turnAgentText(): string {
-    const parts: string[] = [];
-    for (let i = this.events.length - 1; i >= 0 && parts.length < 200; i--) {
-      const e = this.events[i];
-      if (e.kind === 'user') break;
-      if (e.kind !== 'update' || !isDict(e.data)) continue;
-      const update = get(e.data, 'update');
-      if (!isDict(update) || get(update, 'sessionUpdate') !== 'agent_message_chunk') continue;
-      const content = get(update, 'content');
-      const piece = isDict(content) ? get(content, 'text') : null;
-      if (isStr(piece)) parts.push(piece);
-    }
-    return clip(parts.reverse().join('').trim(), 1000);
-  }
-
-  /** A prompt failed with ACP auth_required mid-session: show the sign-in card and keep the message for one resend (Deno only). */
-  #holdForSignIn(error: RpcError, seq: number): void {
-    const said = this.#turnAgentText();
-    const again = this.#authResent;
-    this.#authResent = false;
-    this.error = '';
-    const detail = clip([said, error.message].filter(Boolean).join('\n'), 1500);
-    this.auth = {
-      methods: [...this.authMethods],
-      message: clip(error.message, 500),
-      error: again ? 'AIB sent your message again after the sign-in, but the agent still asks for sign-in. Try again.' : '',
-      working: false,
-      during: 'prompt',
-      detail,
-    };
-    const last = this.#lastPrompt;
-    this.#authRetry = last && last.seq === seq ? { text: last.text, attachments: last.attachments } : this.#authRetry;
-    this.#queueNoteOutcome(null, false);
-    this.event('auth_required', { methods: this.auth.methods, message: this.auth.message, during: 'prompt', detail });
-  }
-
-  /** The person's answer to a mid-session sign-in card: authenticate in-app, retry after a terminal sign-in, or dismiss. */
-  #answerPromptAuth(auth: AuthState, action: unknown, methodId: unknown): void {
-    if (action === 'cancel') {
-      this.auth = null;
-      this.#authRetry = null;
-      this.event('error', { message: auth.detail || auth.message || 'Sign-in required' });
-      void this.#queuePump();
-      return;
-    }
-    if (action === 'retry') {
-      void this.#resumeAfterSignIn();
-      return;
-    }
-    if (action !== 'authenticate') throw new ValueError('Action must be authenticate, retry, or cancel');
-    const method = isStr(methodId) ? auth.methods.find((m) => m.id === methodId) ?? null : null;
-    if (method === null) throw new ValueError('Unknown sign-in method');
-    if (method.kind !== 'agent') {
-      throw new ValueError('This sign-in runs in a terminal: choose Sign in on the card, or finish it outside AIB, then choose Try again.');
-    }
-    auth.working = true;
-    auth.error = '';
-    void (async () => {
-      try {
-        await this.request('authenticate', this.authenticateParams(method.id), 900);
-      } catch (failure) {
-        if (this.auth === auth) {
-          auth.working = false;
-          auth.error = 'Sign-in failed: ' + clip(errorText(failure), 300);
-          this.#scheduleSnapshot();
-        }
-        return;
-      }
-      if (this.auth === auth) await this.#resumeAfterSignIn();
-    })();
-  }
-
-  /** Signed in again: the card goes and the message that failed is sent once more (nothing to send: the queue goes on). */
-  async #resumeAfterSignIn(): Promise<void> {
-    const retry = this.#authRetry;
-    this.auth = null;
-    this.#authRetry = null;
-    if (!retry || this.closed || !this.ready || (this.busy && !this.autonomous)) {
-      void this.#queuePump();
-      return;
-    }
-    this.#authResent = true;
-    try {
-      await this.prompt(retry.text, null, retry.attachments);
-    } catch (error) {
-      this.#authResent = false;
-      this.event('error', { message: 'AIB could not send your message again after the sign-in: ' + errorText(error) });
-    }
-  }
-
-  /** Called from the HTTP layer: choose an in-app method, retry after an external sign-in, or cancel. */
-  answerAuth(action: unknown, methodId: unknown = null): void {
-    const auth = this.auth;
-    if (!auth) {
-      throw new ValueError('No sign-in is pending for this connection');
-    }
-    if (auth.working) throw new ValueError('Sign-in is already in progress');
-    if (auth.during === 'prompt') return this.#answerPromptAuth(auth, action, methodId);
-    if (action === 'authenticate') {
-      const method = isStr(methodId) ? auth.methods.find((m) => m.id === methodId) ?? null : null;
-      if (method === null) throw new ValueError('Unknown sign-in method');
-      if (method.kind !== 'agent') {
-        throw new ValueError(
-          'This sign-in must be completed outside AIB. Follow the instructions shown, then choose Retry.',
-        );
-      }
-    } else if (action !== 'retry' && action !== 'cancel') {
-      throw new ValueError('Action must be authenticate, retry, or cancel');
-    } else {
-      methodId = null;
-    }
-    this.authResponse = [action as string, methodId as string | null];
-    this.authEvent.set();
-  }
-
-  async setup(resume: string | null = null): Promise<void> {
-    this.#refuseReadOnly();
-    this.ready = false;
-    if (resume) this.knownSessions.add(resume);
-    this.initial = await this.setupRequest('initialize', {
-      protocolVersion: 1,
-      clientInfo: {
-        name: 'agent-studio',
-        title: 'AIB',
-        version: APP_VERSION,
-      },
-      clientCapabilities: {
-        ...this.caps.capabilities(),
-        subagents: {},
-        elicitation: { form: {}, url: {} },
-        // A Beta agent that signs in through a terminal: AIB runs that sign-in itself (its own terminal, Settings > AIB Linking), so the
-        // agent may offer its terminal-type methods (ACP auth.terminal); the chat's sign-in card then has a Sign in button.
-        // Claude Code too (Deno only): its "claude-ai-login" / "console-login" terminal methods run in an AIB terminal from the chat's
-        // sign-in card (terminal_routes.ts builtinSigninCommand), never a separate console window.
-        ...(betaAgent(this.provider)?.signin.kind === 'terminal' || (TERMINAL_SIGNIN_PROVIDERS.has(this.provider) && !isClaudeFamily(this.provider) || this.provider === 'claude')
-          ? { auth: { terminal: true } }
-          : {}),
-      },
-    }, 45);
-    this.#checkSetupAbort();
-    const mcpServers = this.#applyInitialize();
-    let result: unknown;
-    let continuedUpdates: ReplayWindow | null = null; // a reopened chat's setup replay (only its outside turns are shown)
-    if (resume) {
-      const resumeCaps = sessionCapabilities(this.initial);
-      if (!resumeCaps.loadSession && !resumeCaps.resume) {
-        throw new ValueError(
-          'This agent does not advertise session loading. Start a new conversation instead.',
-        );
-      }
-      this.sessionId = resume;
-      // AIB's own lines of this conversation (turn ends, AIB notes) go back in after the turns the transcript replays. They are
-      // written to the keeper's record first (before session/load): a rebuild merges the very same lines at the same places.
-      // A reopened chat that goes on in its history store has them there already, with everything else: the replay is not shown.
-      const continued = this.#continued && !!resumeCaps.loadSession;
-      if (this.lines && !this.#replaying && !continued) {
-        const kept = linesWithin(this.lines.read(this.provider, resume), MAX_LINES_NOTE_BYTES);
-        if (kept.length) {
-          if (this.channel) await this.channel.sendNote({ t: 'lines', lines: kept });
-          this.#merger = new LineMerger(kept);
-        }
-      }
-      if (continued) this.#reload = { window: new ReplayWindow(), discard: false };
-      try {
-        result = await this.#setupSessionCall(
-          resumeCaps.loadSession ? 'session/load' : 'session/resume',
-          {
-            sessionId: resume,
-            cwd: this.agentCwd,
-            mcpServers: this.#acpMcp(mcpServers),
-            ...this.artifactPrompt(this.mcpInConfig() ? this.mcpServers : mcpServers),
-            ...this.extraFolders(),
-            ...this.claudeMeta(),
-            ...this.codexMeta(),
-          },
-        );
-      } finally {
-        if (continued) {
-          continuedUpdates = this.#reload?.window ?? new ReplayWindow();
-          this.#reload = null;
-        }
-        this.#continued = false; // (an agent that only resumes replays nothing: nothing to drop)
-      }
-    } else {
-      result = await this.#setupSessionCall('session/new', {
-        cwd: this.agentCwd,
-        mcpServers: this.#acpMcp(mcpServers),
-        ...this.artifactPrompt(this.mcpInConfig() ? this.mcpServers : mcpServers),
-        ...this.extraFolders(),
-        ...this.claudeMeta(),
-        ...this.codexMeta(),
-      });
-    }
-    this.#takeSession(result, resume);
-    if (!resume) {
-      // Live setup only (a keeper replay never comes here): the New chat page's picks go in before the chat is ready, so the
-      // first prompt runs with them. Their set_config_option / set_mode calls are in the keeper's record like any other, so a
-      // rebuild replays their answers and never sends them again.
-      this.startSettings = structuredClone(result) as Json;
-      await this.applyStartPicks();
-      await this.applyModelQuirk();
-      this.#checkSetupAbort();
-    }
-    await this.#awaitToolsServed();
-    this.#markReady();
-    if (continuedUpdates) this.#showOutsideTurns(continuedUpdates);
-  }
-
-  /**
-   * Codex family, servers in CODEX_CONFIG: codex-acp's startup wait (`_meta.mcpStartupAwaitTimeoutMs`) covers only servers listed in
-   * session/new, so AIB waits itself, up to the same time, until AIB's tool server has answered this chat's first tools/list (the
-   * chat shows "starting" meanwhile). Without it a first prompt can find no studio_artifact tools yet (a slow forwarder start).
-   * Best effort: no hook, a chat whose tool server leaves no record (dev stdio) or a late server just ends the wait.
-   */
-  async #awaitToolsServed(): Promise<void> {
-    const served = this.toolsServed;
-    // only the keeper forwarder's and the WSL tunnel's tools/list leave a record (artifacts/served.ts)
-    const forwarded = this.mcpServers.some((s) => isOwnArtifactEntry(s) && 'args' in s && s.args[0] === 'mcp-forward');
-    if (!served || !this.mcpInConfig() || !forwarded) return;
-    const until = Date.now() + CODEX_MCP_STARTUP_WAIT_MS;
-    while (!served(this.processStartedAt) && Date.now() < until && !this.closed) await new Promise((r) => setTimeout(r, 50));
-  }
-
-  /** What the `initialize` result (this.initial) sets; returns the MCP servers this agent gets. Live setup and replay share it. */
-  #applyInitialize(): McpServer[] {
-    if (
-      !isDict(this.initial) || !pyEq(get(this.initial, 'protocolVersion'), 1)
-    ) {
-      throw new ValueError(
-        'The agent did not negotiate supported ACP protocol version 1',
-      );
-    }
-    let advertised = pget(
-      get(this.initial, 'agentCapabilities', {}),
-      'promptCapabilities',
-      {},
-    );
-    advertised = isDict(advertised) ? advertised : {};
-    this.promptCaps = Object.fromEntries(
-      ['image', 'audio', 'embeddedContext'].map((
-        key,
-      ) => [key, get(advertised as Json, key) === true]),
-    );
-    this.imageSupported = this.promptCaps.image;
-    this.authMethods = describeAuthMethods(
-      get(this.initial, 'authMethods'),
-      this.provider,
-    );
-    const [mcpServers, skipped] = selectMcpServers(
-      this.mcpServers,
-      this.initial,
-    );
-    this.breadth.skippedMcp = skipped;
-    this.#sessionMcp = mcpServers; // a session/load after an open-elsewhere hand-off sends the same
-    return mcpServers;
-  }
-
-  /** What a session/new, session/load or session/resume result sets: the chat is ready. Replay uses it as is. */
-  #applySession(result: unknown, resume: string | null): void {
-    this.#takeSession(result, resume);
-    this.#markReady();
-  }
-
-  /** The session id and settings of a session/new, session/load or session/resume result. Live setup and replay share it. */
-  #takeSession(result: unknown, resume: string | null): void {
-    this.#mergeDone(); // the transcript replay is over: the last replayed turn's lines
-    if (resume) this.sessionId = resume;
-    else this.sessionId = isDict(result) ? get(result, 'sessionId') as string | null : null;
-    if (!isDict(result) || !isStr(this.sessionId) || !this.sessionId) {
-      throw new ValueError('The agent returned an invalid session response');
-    }
-    this.#withModels(result); // ACP `models` (Gemini): shown, and remembered through startSettings, as the model option
-    Object.assign(this.settings, result);
-    this.#withModels(this.settings);
-    this.knownSessions.add(this.sessionId);
-  }
-
-  /** The chat is ready: prompts are accepted from now on. */
-  #markReady(): void {
-    this.ready = true;
-    this.event('connected', {
-      sessionId: this.sessionId,
-      provider: this.provider,
-    });
-  }
-
-  /**
-   * Apply the New chat page's picks to the session that was just made, each validated against what the agent reports NOW (a remembered
-   * model may be gone). A pick equal to the current value is skipped. A refusal is recorded, never thrown: the chat still opens, with
-   * the agent's own setting, and the page says which pick did not apply.
-   */
-  async applyStartPicks(): Promise<Json[]> {
-    const picks = this.startPicks;
-    this.pickResults = [];
-    if (!picks) return this.pickResults;
-    for (const kind of ['model', 'mode', 'effort'] as const) {
-      const value = picks[kind];
-      if (!isStr(value) || !value) continue;
-      const entry: Json = { kind, value, ok: false };
-      try {
-        const modes = isDict(this.settings.modes) ? this.settings.modes : null;
-        if (kind === 'mode' && modes && Array.isArray(modes.availableModes) && modes.availableModes.length) {
-          const offered = offeredModeIds(modes);
-          // A helper names a list of acceptable ids (first offered wins, never a broader one); a remembered default that holds a
-          // renamed id (codex `auto` -> `workspace-write`) is matched to its twin. Neither offered: refused, naming what is offered.
-          const want = picks.modeAnyOf?.length ? picks.modeAnyOf : [value];
-          const use = resolveMode(offered, want, !picks.modeAnyOf?.length);
-          if (!use) {
-            entry.offered = offered;
-            throw new ValueError(`${want.join(' or ')} is not one of the modes this agent offers (${offered.join(', ')})`);
-          }
-          entry.value = use;
-          checkMode(this.settings, use);
-          if (modes.currentModeId !== use) await this.setMode(use);
-        } else {
-          const option = findPickOption(this.settings, kind);
-          if (!option) throw new ValueError(`This agent does not offer a ${kind} setting in this chat`);
-          entry.configId = option.id;
-          if (!optionValues(option).includes(value)) throw new ValueError('No longer offered by the agent');
-          if (option.currentValue !== value) await this.setConfig(option.id, value);
-        }
-        entry.ok = true;
-      } catch (error) {
-        entry.message = error instanceof Error ? error.message : String(error);
-        if (!(error instanceof RpcError) && !(error instanceof ValueError) && !(error instanceof TypeError)) {
-          log.exception(error, 'Applying a start pick failed');
-        }
-      }
-      this.pickResults.push(entry);
-    }
-    return this.pickResults;
-  }
-
-  /**
-   * A quiet look at what a new session of this agent offers: initialize, session/new in this folder with no MCP servers, read the
-   * reply, close the session when the agent can. Never signs in: an agent that needs sign-in simply has no list. The caller closes
-   * the process. Returns the session/new reply (sessionId, modes, configOptions, ...).
-   */
-  async probeSettings(timeoutSeconds = 30): Promise<Json> {
-    return await this.#probeSettings(timeoutSeconds);
-  }
-
   // ---- open elsewhere (ownership/handoff.ts) ---------------------------------------------------------------------------------
   /**
    * Another app's Claude Code process holds this chat's session (Claude Code's session registry names it). `released`: AIB closed
    * its session (session/close: the Claude process ended, the adapter and its keeper channel stay) and loads it again when the
    * person comes back. null: AIB holds the session.
    */
-  elsewhere: { app: string; pid: number; entrypoint: string; since: number; released: boolean; heldNoted?: boolean; line?: string } | null = null;
+  elsewhere: Elsewhere | null = null;
   /** AIB hook (handoff.ts): who else holds this chat's session now; null when nobody does (or AIB cannot tell). */
   holderNow: (() => Promise<Holder | null>) | null = null;
   /** AIB hook: this chat let go of its session ('released') or took it back ('back'). */
   onElsewhere: ((connection: Connection, what: 'released' | 'back') => void) | null = null;
   /** Processes the person chose Open here anyway over: their holding no longer makes this chat let go. */
   readonly overriddenHolders = new Set<number>();
-  #sessionMcp: McpServer[] = [];
+  $sessionMcp: McpServer[] = [];
   /** Set while a session/load after a hand-off runs: the history the agent sends back is held here, not shown again. */
-  #reload: { window: ReplayWindow; discard: boolean } | null = null;
-  #releasing = false;
-  #reclaiming: Promise<{ state: 'attached' | 'back' | 'held'; app?: string; picked?: number }> | null = null;
+  $reload: { window: ReplayWindow; discard: boolean } | null = null;
+  $releasing = false;
+  $reclaiming: Promise<{ state: 'attached' | 'back' | 'held'; app?: string; picked?: number }> | null = null;
   /** The text of the last user message this chat showed (sent here, or replayed by the agent): where the outside turns begin. */
-  #lastUserText = '';
-  #inUserText = false;
-
-  /** The agent can close a session and keep running (claude-agent-acp: sessionCapabilities.close). */
-  canCloseSession(): boolean {
-    return sessionCapabilities(this.initial).ops.includes('close');
-  }
-
-  /** Another app holds this chat's session: let go now when quiet, else when the turn (and its helpers) end. Idempotent. */
-  handOff(holder: Holder): void {
-    if (this.closed || !this.ready || !this.sessionId || this.#replaying || this.elsewhere || this.rebuildError) return;
-    if (this.overriddenHolders.has(holder.pid)) return; // the person chose Open here anyway over this one
-    if (!this.canCloseSession()) {
-      log.info('chat %s: open in %s, but its agent cannot close a session; AIB keeps it', this.id, holder.app);
-      return;
-    }
-    this.elsewhere = { app: holder.app, pid: holder.pid, entrypoint: holder.entrypoint, since: this.#now(), released: false };
-    void this.tryRelease();
-  }
-
-  /**
-   * Let go of this chat now, only when it is idle (Codex: an app-server of VS Code / Codex Desktop started, or the person chose Let go).
-   * Never waits for a turn: 'busy' means it is working (a turn, a question, a helper or a shell), 'no' that nothing was done (not
-   * ready, already let go, the agent cannot close a session, or closing failed). `line` is the chat line's text.
-   */
-  async letGoIdle(holder: Holder, line: string): Promise<'released' | 'busy' | 'no'> {
-    if (this.closed || !this.ready || !this.sessionId || this.#replaying || this.elsewhere || this.rebuildError) return 'no';
-    if (!this.canCloseSession()) return 'no';
-    if (!this.#quietForRelease(false)) return 'busy';
-    this.elsewhere = { app: holder.app, pid: holder.pid, entrypoint: holder.entrypoint, since: this.#now(), released: false, line };
-    const e = this.elsewhere;
-    if (await this.tryRelease()) return 'released';
-    if (this.elsewhere !== e) return 'no'; // closing failed (tryRelease cleared it)
-    this.elsewhere = null; // something started in between: no waiting for the turn to end, as the other hand-offs do
-    return 'busy';
-  }
-
-  /** Nothing would be lost by closing the session now: no turn, no question open, no background helper or shell, nothing sending. */
-  #quietForRelease(turnEnding: boolean): boolean {
-    return (turnEnding || !this.busy) && !this.permissions.size && !this.elicitations.size && !this.auth && !this.queue.inflight &&
-      !this.helpersRunning() && !this.backgroundShellsRunning() && !this.landing;
-  }
-
-  /** Close the session of a chat another app holds, if nothing would be lost now. true when it let go. */
-  async tryRelease(turnEnding = false): Promise<boolean> {
-    const e = this.elsewhere;
-    if (!e || e.released || this.closed || this.#releasing || this.#replaying || !this.sessionId) return false;
-    if (!this.#quietForRelease(turnEnding)) return false;
-    this.#releasing = true;
-    try {
-      await this.request('session/close', { sessionId: this.sessionId }, 15);
-      e.released = true;
-      e.heldNoted = false;
-      this.recordedEvent('studio_note', {
-        message: e.line ?? `Continued in ${e.app}. AIB let go of this chat. Open it here to take it back.`,
-        sessionId: this.sessionId,
-        elsewhere: 'released',
-        actions: [{ id: 'elsewhere-open', label: 'Open here' }],
-      });
-      log.info('chat %s: let go of %s (open in %s, pid %s)', this.id, this.sessionId, e.app, e.pid);
-      this.onElsewhere?.(this, 'released');
-      return true;
-    } catch (error) {
-      log.warning('chat %s: closing its session for %s failed: %s', this.id, e.app, errorText(error));
-      if (this.elsewhere === e) this.elsewhere = null; // the next scan tries again
-      return false;
-    } finally {
-      this.#releasing = false;
-    }
-  }
+  $lastUserText = '';
+  $inUserText = false;
 
   /**
    * One writer at a time: Codex refuses a second app on a thread (codex_threads.ts), so a Codex chat another app holds cannot be
@@ -4933,861 +916,19 @@ export class Connection {
     return isCodexFamily(this.provider);
   }
 
-  /** The line of a chat AIB let go of that another app still holds (once per hand-off). */
-  #noteHeld(e: NonNullable<Connection['elsewhere']>, app: string): void {
-    e.app = app;
-    if (e.heldNoted) return;
-    e.heldNoted = true;
-    this.recordedEvent('studio_note', {
-      message: this.singleWriter
-        ? `Still open in ${app}. Close it there first, then choose Open here (Codex lets only one app write to a chat at a time).`
-        : `Still open in ${app}. Close it there first, or open it here anyway (two apps writing to one chat can mix up its messages).`,
-      sessionId: this.sessionId,
-      elsewhere: 'held',
-      actions: [this.singleWriter ? { id: 'elsewhere-open', label: 'Open here' } : { id: 'elsewhere-force', label: 'Open here anyway' }],
-    });
-  }
-
-  /**
-   * The person came back to a chat AIB let go of (sent a message, or chose Open here): load its session again when nobody else holds
-   * it, or `force` (Open here anyway; not for Codex). Still held: one line with Open here anyway (Codex: Open here), and nothing else
-   * happens. 'attached': AIB holds it.
-   */
-  reclaim(force = false): Promise<{ state: 'attached' | 'back' | 'held'; app?: string; picked?: number }> {
-    if (!this.elsewhere?.released) return Promise.resolve({ state: 'attached' });
-    if (this.#reclaiming) return this.#reclaiming;
-    if (this.singleWriter) force = false;
-    const run = (async () => {
-      const e = this.elsewhere!;
-      const holder = this.holderNow ? await this.holderNow().catch(() => null) : null;
-      if (holder && !force) {
-        this.#noteHeld(e, holder.app);
-        return { state: 'held' as const, app: holder.app };
-      }
-      if (holder) this.overriddenHolders.add(holder.pid); // Open here anyway: that process no longer makes AIB let go
-      try {
-        const picked = await this.#reattach(e.app);
-        return { state: 'back' as const, app: e.app, picked };
-      } catch (error) {
-        // Codex refused: another app took the thread's writer lock (one AIB could not see, or since the check)
-        if (!this.singleWriter || !activeWriterError(error) || this.elsewhere !== e) throw error;
-        log.info('chat %s: %s is open in another app (Codex refused the load)', this.id, this.sessionId);
-        this.#noteHeld(e, 'another app');
-        return { state: 'held' as const, app: e.app };
-      }
-    })();
-    this.#reclaiming = run;
-    return run.finally(() => {
-      if (this.#reclaiming === run) this.#reclaiming = null;
-    });
-  }
-
-  /** session/load again after a hand-off: the turns written elsewhere are shown, the rest of the history the agent sends is not. */
-  async #reattach(app: string): Promise<number> {
-    this.#reload = { window: new ReplayWindow(), discard: false };
-    let result: unknown;
-    let replay = new ReplayWindow();
-    try {
-      result = await this.request('session/load', {
-        sessionId: this.sessionId,
-        cwd: this.agentCwd,
-        mcpServers: this.#acpMcp(this.#sessionMcp),
-        ...this.artifactPrompt(this.mcpInConfig() ? this.mcpServers : this.#sessionMcp),
-        ...this.extraFolders(),
-        ...this.claudeMeta(),
-        ...this.codexMeta(),
-      }, 180);
-    } finally {
-      replay = this.#reload?.window ?? replay;
-      this.#reload = null;
-    }
-    const updates = replay.updates;
-    if (isDict(result)) {
-      this.#withModels(result);
-      Object.assign(this.settings, result);
-      this.#withModels(this.settings);
-    }
-    const outside = outsideTurns(updates, this.#lastUserText);
-    for (const params of outside.updates) {
-      this.#noteUserText(params);
-      this.recordedEvent('update', params);
-    }
-    this.elsewhere = null;
-    const n = outside.turns;
-    this.recordedEvent('studio_note', {
-      message: n ? `AIB took this chat back, with ${n} turn${n === 1 ? '' : 's'} from ${app} above.` : 'AIB took this chat back.',
-      sessionId: this.sessionId,
-      elsewhere: 'back',
-    });
-    log.info(
-      'chat %s: took %s back (%s outside turn(s) of %s replayed updates, the newest %s kept)',
-      this.id,
-      this.sessionId,
-      n,
-      replay.received,
-      updates.length,
-    );
-    this.onElsewhere?.(this, 'back');
-    void this.#queuePump(); // messages queued while it was away go now, one per turn
-    return n;
-  }
-
-  /** Remember the newest user message the agent shows (its consecutive user_message_chunk updates). */
-  #noteUserText(params: unknown): void {
-    const update = isDict(params) ? get(params, 'update', {}) as Json : {};
-    const kind = get(update, 'sessionUpdate');
-    const own = !this.sessionId || !isDict(params) || get(params, 'sessionId') === this.sessionId;
-    if (!own) return;
-    if (kind === 'user_message_chunk') {
-      const content = get(update, 'content', {}) as Json;
-      if (!this.#inUserText) this.#lastUserText = '';
-      this.#inUserText = true;
-      if (isDict(content) && content.type === 'text' && isStr(content.text)) this.#lastUserText += content.text;
-    } else if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'tool_call') {
-      this.#inUserText = false;
-    }
-  }
-
-  async #probeSettings(timeoutSeconds: number): Promise<Json> {
-    await this.initializeForDiscovery();
-    const result = await this.request('session/new', { cwd: this.agentCwd, mcpServers: [] }, timeoutSeconds);
-    if (!isDict(result)) throw new ValueError('The agent returned an invalid session response');
-    this.#withModels(result); // the remembered lists (agent-options.json) keep an agent's models list as its model option
-    const sid = get(result, 'sessionId');
-    const caps = sessionCapabilities(this.initial);
-    if (isStr(sid) && sid && caps.ops.includes('close')) {
-      try {
-        await this.request('session/close', { sessionId: sid }, 5);
-      } catch { /* the process is ended next anyway */ }
-    }
-    return result;
-  }
-
-  /**
-   * Name a saved session the agent's own way, in this short-lived process (no session loaded, no prompt, no model call): Claude
-   * Code's and Codex's adapters offer `_session/rename` to a client that declares their session index extension
-   * (`_meta.jetbrains.air.capabilities: ["sessionIndex"]`, which only this probe process declares: a chat's own process stays a
-   * plain ACP client). Claude Code's adapter appends the same `custom-title` / `agent-name` records and `custom-title.json` the
-   * CLI's `/rename` writes; codex-acp sets the thread name through its app-server (`thread/name/set`). Returns false when the agent
-   * does not offer it (an older adapter, another agent); throws on a refusal.
-   */
-  async renameSessionTitle(sessionId: string, title: string, timeoutSeconds = 45): Promise<boolean> {
-    this.initial = await this.request('initialize', {
-      protocolVersion: 1,
-      clientInfo: { name: 'agent-studio', title: 'AIB', version: APP_VERSION },
-      clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: false,
-        _meta: { jetbrains: { air: { version: 1, capabilities: ['sessionIndex'] } } },
-      },
-    }, timeoutSeconds);
-    if (!isDict(this.initial) || !pyEq(get(this.initial, 'protocolVersion'), 1)) {
-      throw new ValueError('The agent did not negotiate supported ACP protocol version 1');
-    }
-    const meta = get(this.initial, '_meta');
-    const jetbrains = isDict(meta) ? get(meta, 'jetbrains') : null;
-    const air = isDict(jetbrains) ? get(jetbrains, 'air') : null;
-    const offered = isDict(air) ? get(air, 'capabilities') : null;
-    if (!Array.isArray(offered) || !offered.includes('sessionRename')) return false;
-    await this.request('_session/rename', { sessionId, title }, timeoutSeconds);
-    return true;
-  }
-
-  /** Initialize only (no session) so session/list can run in a short-lived process. */
-  async initializeForDiscovery(): Promise<void> {
-    this.initial = await this.request('initialize', {
-      protocolVersion: 1,
-      clientInfo: {
-        name: 'agent-studio',
-        title: 'AIB',
-        version: APP_VERSION,
-      },
-      clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: false,
-      },
-    }, 45);
-    if (
-      !isDict(this.initial) || !pyEq(get(this.initial, 'protocolVersion'), 1)
-    ) {
-      throw new ValueError(
-        'The agent did not negotiate supported ACP protocol version 1',
-      );
-    }
-  }
-
-  async listSessions(
-    cwd: string | null = null,
-    cursor: string | null = null,
-  ): Promise<Json> {
-    const capabilities = isDict(this.initial) ? get(this.initial, 'agentCapabilities', {}) : {};
-    const sessionCaps = isDict(capabilities) ? get(capabilities, 'sessionCapabilities') : null;
-    if (!isDict(sessionCaps) || get(sessionCaps, 'list') === null) {
-      return { supported: false, sessions: [], nextCursor: null };
-    }
-    const params: Json = {};
-    if (cwd) params.cwd = cwd;
-    if (cursor) params.cursor = cursor;
-    const result = await this.request('session/list', params, 60);
-    const raw = isDict(result) ? get(result, 'sessions') : null;
-    if (!Array.isArray(raw)) {
-      throw new ValueError('The agent returned an invalid session list');
-    }
-    const sessions: Json[] = [];
-    for (const item of raw.slice(0, 500)) {
-      if (
-        isDict(item) && isStr(item.sessionId) && item.sessionId &&
-        pyLen(item.sessionId) <= 512 && isStr(item.cwd)
-      ) {
-        sessions.push({
-          sessionId: item.sessionId,
-          cwd: clip(item.cwd, 1024),
-          title: isStr(item.title) ? clip(item.title, 300) : '',
-          updatedAt: isStr(item.updatedAt) ? item.updatedAt : '',
-        });
-      }
-    }
-    const nextCursor = get(result as Json, 'nextCursor');
-    return {
-      supported: true,
-      sessions,
-      nextCursor: isStr(nextCursor) && nextCursor ? nextCursor : null,
-    };
-  }
-
-  preparePrompt(
-    text: unknown,
-    clientMessageId: unknown,
-    attachments: unknown,
-  ): [ImageBlock[], Json[], FileSummary[], string] {
-    if (!isStr(text) || pyLen(text) > 200000) {
-      throw new ValueError('Prompt text must be at most 200,000 characters');
-    }
-    if (!(isStr(clientMessageId) && /^(swarm|merge)-/.test(clientMessageId))) this.ownerTouched = true;
-    let imageBlocks: ImageBlock[] = [];
-    let fileBlocks: Json[] = [];
-    let fileSummaries: FileSummary[] = [];
-    let fileFingerprints: Json[] = [];
-    if (
-      attachments !== null && attachments !== undefined &&
-      !(Array.isArray(attachments) && attachments.length === 0)
-    ) {
-      const [imageItems, fileItems] = splitAttachments(attachments);
-      let imageTotal = 0;
-      if (imageItems.length) {
-        if (!this.imageSupported) {
-          throw new ValueError(
-            'This agent does not advertise image prompt support',
-          );
-        }
-        [imageBlocks, imageTotal] = validateImageAttachments(imageItems);
-      }
-      if (fileItems.length) {
-        const [records, fileTotal] = validateFileAttachments(fileItems);
-        if (imageTotal + fileTotal > MAX_TOTAL_ATTACHMENT_BYTES) {
-          throw new ValueError(
-            `Attachments exceed the ${Math.floor(MAX_TOTAL_ATTACHMENT_BYTES / 1048576)} MiB total limit`,
-          );
-        }
-        [fileBlocks, fileSummaries] = mapFileAttachments(
-          records,
-          this.promptCaps,
-        );
-        fileFingerprints = records.map((r) => ({
-          name: r.name,
-          mimeType: r.mimeType,
-          size: r.size,
-          sha256: r.sha256,
-        }));
-      }
-    }
-    if (!pyStrip(text) && !imageBlocks.length && !fileBlocks.length) {
-      throw new ValueError(
-        'Enter a prompt or attach at least one image or file',
-      );
-    }
-    if (
-      clientMessageId !== null && clientMessageId !== undefined &&
-      (!isStr(clientMessageId) || pyLen(clientMessageId) < 1 ||
-        pyLen(clientMessageId) > 128)
-    ) throw new ValueError('Invalid client message ID');
-    let data: string;
-    if (fileFingerprints.length) {
-      data = sortedCompactJson([text, imageBlocks, fileFingerprints]);
-    } else if (imageBlocks.length) {
-      data = sortedCompactJson([text, imageBlocks]);
-    } else data = text;
-    const fingerprint = createHash('sha256').update(
-      new TextEncoder().encode(data),
-    ).digest('hex');
-    return [imageBlocks, fileBlocks, fileSummaries, fingerprint];
-  }
-
-  async prompt(
-    text: unknown,
-    clientMessageId: string | null = null,
-    attachments: unknown = null,
-  ): Promise<Json> {
-    const [imageBlocks, fileBlocks, fileSummaries, fingerprint] = this
-      .preparePrompt(text, clientMessageId, attachments);
-    let receipt = clientMessageId ? this.promptReceipts.get(clientMessageId) ?? null : null;
-    if (!receipt && clientMessageId && this.recovery && this.sessionId) {
-      receipt = this.recovery.receipt(this, clientMessageId);
-    }
-    if (receipt) {
-      if (receipt.fingerprint !== fingerprint) {
-        throw new ValueError(
-          'This client message ID was already used for different text',
-        );
-      }
-      if (receipt.state === 'unknown') {
-        throw new PromptStateUnknown(PROMPT_UNKNOWN);
-      }
-      // B3: a steer the agent did not take (promptRequired, or it failed) goes again as this prompt, with the same id.
-      if (receipt.state !== 'steering') {
-        return {
-          accepted: true,
-          duplicate: true,
-          clientMessageId,
-          turnState: receipt.state,
-        };
-      }
-    }
-    this.#refuseReadOnly();
-    // Open elsewhere: AIB let go of this chat. Sending takes it back when nobody else holds it; still held: nothing is sent.
-    if (this.elsewhere?.released && !this.closed) {
-      const back = await this.reclaim(false);
-      if (back.state === 'held') throw new HeldElsewhere(back.app || 'another app', this.singleWriter);
-    }
-    if (this.closed || !this.ready || !this.sessionId) {
-      throw new ValueError('This connection is not ready');
-    }
-    // Build plan 1b, 2.3: a landing holds this chat's folder. Every route that starts a turn comes through here (the page, a steer while
-    // idle, the phone, a helper's report, a merge prompt): it waits in the queue instead, and goes when the landing lets go.
-    if (this.landing) {
-      if (clientMessageId && receipt?.state === 'steering') this.promptReceipts.delete(clientMessageId); // a steer the agent did not take
-      return await this.#queueForLanding(text, clientMessageId, attachments);
-    }
-    // A cycle Claude Code started on its own does not refuse a prompt: the prompt's turn takes the cycle over, as the adapter does.
-    if (this.busy && !this.autonomous) {
-      throw new ValueError(
-        'Wait for the current turn, or interrupt it before sending another prompt',
-      );
-    }
-    const forkRefusal = this.forkSkillRefusal(text);
-    if (forkRefusal) return this.#refuseTyped(text, clientMessageId, fingerprint, imageBlocks, fileSummaries, forkRefusal);
-    const seq = this.#startTurn(clientMessageId, fingerprint);
-    if (this.onUserPrompt) {
-      try {
-        this.onUserPrompt(this, text, clientMessageId);
-      } catch (error) {
-        log.exception(error, 'on_user_prompt hook failed');
-      }
-    }
-    await this.#drainPending(); // changes still queued from a finished turn go first; a failure is reported but never drops this prompt
-    const userEvent: Json = {
-      text,
-      attachments: imageBlocks,
-      sessionId: this.sessionId,
-      clientMessageId,
-    };
-    if (fileSummaries.length) userEvent.files = fileSummaries; // names, types, sizes and a bounded text preview; never the full content
-    this.event('user', userEvent);
-    if (isStr(text) && pyStrip(text)) {
-      this.#lastUserText = text;
-      this.#inUserText = false;
-    }
-    this.#lastPrompt = { seq, text, attachments };
-    this.turn = this.#runTurn(
-      seq,
-      text as string,
-      fileBlocks,
-      imageBlocks,
-      clientMessageId,
-      { receipt: clientMessageId, fingerprint, text, files: fileSummaries },
-    );
-    return {
-      accepted: true,
-      duplicate: false,
-      clientMessageId,
-      turnState: 'working',
-    };
-  }
-
-  /**
-   * Subagent worktrees (work/p3_skill_fork_probe.py typed-*, Claude Code 2.1.310): a skill or command with `context: fork` that the
-   * user starts by typing `/name` runs as a forked subagent with no Skill or Agent tool call, so none of AIB's hooks sees it, and it
-   * edits this folder (verified in acceptEdits and bypass mode). In a Claude chat under the subagent rule (hooks on, or editing
-   * subagents off), AIB doesn't send it: the chat line saying why, else null. Reads the skill files only; never throws.
-   */
-  forkSkillRefusal(text: unknown): string | null {
-    if (!isClaudeFamily(this.provider) || !isStr(text)) return null;
-    const h = this.subagentHooks;
-    if (!h || !(isDict(h.settings?.hooks) || isDict(h.deny) || h.adopted === true)) return null;
-    const m = /^\/(\S+)/.exec(pyStrip(text));
-    if (!m) return null;
-    try {
-      const configDir = h.configDir ?? claudeConfigDir(Deno.env.toObject());
-      const project = this.projectRoot || this.cwd;
-      const fork = isForkSkill(m[1], this.cwd, configDir) || (project !== this.cwd && isForkSkill(m[1], project, configDir));
-      return fork ? typedForkSkillText(m[1].slice(0, 120)) : null;
-    } catch (error) {
-      log.warning('Could not check /%s for a fork skill: %s', m[1].slice(0, 120), errorText(error));
-      return null;
-    }
-  }
-
-  /** A typed prompt AIB doesn't send (forkSkillRefusal): it shows as sent, then AIB's line says why; no turn starts. */
-  #refuseTyped(text: unknown, clientMessageId: string | null, fingerprint: string, attachments: ImageBlock[], files: unknown[], message: string): Json {
-    if (clientMessageId) {
-      this.promptReceipts.set(clientMessageId, { fingerprint, state: 'finished' });
-      this.#receiptChanged(clientMessageId);
-    }
-    const userEvent: Json = { text, attachments, sessionId: this.sessionId, clientMessageId };
-    if (files.length) userEvent.files = files;
-    this.event('user', userEvent);
-    this.recordedEvent('studio_note', { message, sessionId: this.sessionId });
-    setTimeout(() => void this.#queuePump(), 0); // a queued message behind it goes now (the pump stops after a non-duplicate send)
-    return { accepted: true, duplicate: false, clientMessageId, turnState: 'finished', refused: message };
-  }
-
-  /** The turn begins: busy, and the receipt is "working". Shared by prompt() and a turn rebuilt from the keeper's record. */
-  #startTurn(clientMessageId: string | null, fingerprint: string): number {
-    this.busy = true;
-    this.autonomous = false; // a prompt sent while Claude Code ran a cycle of its own takes that cycle over
-    this.#turnHelpers.clear();
-    this.#steerTurn = { injected: 0, outputAfter: false, unread: [] };
-    this.#clearSettle();
-    this.#promptOut.clear();
-    this.#noteTurnProcesses();
-    this.turnStartedAt = now();
-    this.error = '';
-    this.turnFailedAt = null; // sending is acting on a failure or a question
-    this.turnError = '';
-    this.#asks = null;
-    this.#stall = null; // and on a stall
-    this.#lastOutputAt = this.#now();
-    this.promptSeq += 1;
-    const seq = this.promptSeq;
-    if (clientMessageId) {
-      this.promptReceipts.set(clientMessageId, {
-        fingerprint,
-        state: 'working',
-      });
-      while (this.promptReceipts.size > 1000) {
-        this.promptReceipts.delete(this.promptReceipts.keys().next().value!);
-      }
-      this.#receiptChanged(clientMessageId);
-    }
-    return seq;
-  }
-
-  async #runTurn(
-    seq: number,
-    text: string,
-    fileBlocks: Json[],
-    imageBlocks: ImageBlock[],
-    clientMessageId: string | null,
-    receipt: Json | null,
-    replayed: { entry: Pending; id: unknown } | null = null,
-  ): Promise<void> {
-    try {
-      const context = replayed ? null : await this.#aibContext();
-      const blocks = [
-        ...(context ? [{ type: 'text', text: context[0] }] : []),
-        ...(pyStrip(text) ? [{ type: 'text', text }] : []),
-        ...fileBlocks,
-        ...imageBlocks,
-      ];
-      let result: unknown;
-      if (replayed) { // the old AIB sent it: wait for its response, from the record or live
-        const promptReceipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
-        if (promptReceipt) promptReceipt.sent = true; // the agent has it already (a deliberate stop records it as delivered)
-        this.#promptOut.set();
-        result = await this.#untilReplyEnds(seq, this.#awaitReplayed(replayed.entry, replayed.id));
-      } else if (this.cancelSeq >= seq) { // cancelled while the hook above was still working: the agent never had this turn
-        this.#promptOut.set();
-        result = { stopReason: 'cancelled' };
-      } else {
-        // (not `receipt`: that is the keeper's receipt note for this turn, below)
-        const promptReceipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
-        if (promptReceipt) promptReceipt.sent = true;
-        const send = (attempt: number): Promise<unknown> =>
-          this.request('session/prompt', {
-            sessionId: this.sessionId,
-            prompt: blocks,
-          }, 86400, {
-            // keeper: the receipt note goes first, so a later AIB rebuilds the page's message and receipt; the key stops a resend
-            note: (id) => receipt ? { t: 'receipt', rpc: id, ...receipt } : null,
-            once: clientMessageId ? `prompt:${clientMessageId}${attempt ? ':' + attempt : ''}` : undefined,
-          });
-        // An agent still works on something AIB thinks is over (a steer it answered promptRequired, the end of a cancelled turn) and refuses
-        // the prompt with "Agent is already processing...". That is no failure: the message waits and goes the moment the agent is free.
-        const sendWhenFree = async (): Promise<unknown> => {
-          const until = Date.now() + busyRetry.maxSeconds * 1000;
-          for (let attempt = 0;; attempt++) {
-            try {
-              return await send(attempt);
-            } catch (error) {
-              if (!isAgentBusyError(error) || this.closed || this.cancelSeq >= seq || Date.now() >= until) throw error;
-              log.info('chat %s: the agent is still processing; the message goes when it is free', this.id);
-              await new Promise((resolve) => setTimeout(resolve, busyRetry.delayMs));
-              if (this.closed || this.cancelSeq >= seq) throw error;
-            }
-          }
-        };
-        const response = sendWhenFree();
-        this.#promptOut.set(); // written: a steer from now on reaches this turn
-        result = await this.#untilReplyEnds(seq, response);
-        await this.#aibContextSent(context);
-      }
-      this.#clearSettle();
-      this.turnEndedAt = this.#now();
-      if (!(isDict(result) && result.stopReason === 'cancelled')) this.#noteAsks();
-      this.#backgroundOpenTools(seq);
-      if (!(isDict(result) && result.stopReason === 'cancelled')) this.#steerUnread();
-      this.#queueNoteOutcome(result, false);
-      this.#authResent = false;
-      this.event('turn_end', result);
-      const hook = this.onTurnEnd;
-      // A turn that ended before a rebuild had its hooks run by the AIB that saw it end.
-      if (hook && !this.#replaying && !(isDict(result) && result.stopReason === 'cancelled')) {
-        try {
-          await hook(this);
-        } catch (error) {
-          log.exception(error, 'on_turn_end hook failed');
-        }
-      }
-      if (this.onTurnCancelled && !this.#replaying && isDict(result) && result.stopReason === 'cancelled') {
-        await Promise.resolve(this.onTurnCancelled(this)).catch((error) => log.exception(error, 'on_turn_cancelled hook failed'));
-      }
-      if (clientMessageId) {
-        const receipt = this.promptReceipts.get(clientMessageId);
-        if (receipt) receipt.state = 'finished';
-        this.#receiptChanged(clientMessageId);
-      }
-    } catch (error) {
-      const authError = asRpcError(error);
-      if (authError && isAuthRequired(authError) && !this.closed && this.cancelSeq < seq && !this.auth && !this.#replaying) {
-        // The agent's login expired mid-session ("Failed to authenticate…" then ACP auth_required): one sign-in card, not two raw
-        // errors; once signed in, the message goes again once (Deno only).
-        this.#holdForSignIn(authError, seq);
-        if (clientMessageId) {
-          const receipt = this.promptReceipts.get(clientMessageId);
-          if (receipt) receipt.state = 'error';
-          this.#receiptChanged(clientMessageId);
-        }
-        return; // finally still runs
-      }
-      log.exception(error, 'Prompt turn failed');
-      const data = isDict(error) || error instanceof Error ? (error as { data?: unknown }).data : null;
-      if (isDict(data) && isDict(data.subscriptionQuota)) {
-        this.onLimits?.(this, 'qwen-quota', data.subscriptionQuota, this.#now()); // Qwen: the cap is reached
-      }
-      this.error = errorText(error);
-      // Failed (the inbox): only the agent's own answer to this prompt, never a Stop or a chat that closed under it.
-      if (errorName(error) === 'RuntimeError' && !this.closed && this.cancelSeq < seq) {
-        this.turnFailedAt = this.#now();
-        this.turnError = errorText(error).replace(/\s+/g, ' ').trim().slice(0, 300);
-      }
-      this.#queueNoteOutcome(null, true);
-      this.event('error', { message: errorText(error) });
-      if (clientMessageId) {
-        const receipt = this.promptReceipts.get(clientMessageId);
-        if (receipt) receipt.state = 'error';
-        this.#receiptChanged(clientMessageId);
-      }
-    } finally {
-      this.#promptOut.set();
-      this.#clearSettle();
-      this.withdrawTurnRequests();
-      // open elsewhere: another app opened this chat during the turn; let go now, before the chat counts as idle (no prompt slips in)
-      if (this.elsewhere && !this.elsewhere.released && !this.#replaying) await this.tryRelease(true);
-      await this.#finishTurn();
-      await this.#queueAfterTurn();
-      if (!this.#replaying) this.#scheduleSnapshot(); // quiet now (or skipped when the queue started the next turn)
-    }
-  }
-
-  /**
-   * The prompt's response, or `{stopReason: 'end_turn'}` as soon as its reply ended while Claude Code holds the response for
-   * background helpers the turn started (see #watchHeldTurn). The held response still comes later, when the helpers finish or the
-   * next prompt arrives; by then this turn is over, so it changes nothing (a cycle Claude Code ran inside the held turn ends with it).
-   */
-  async #untilReplyEnds(seq: number, response: Promise<unknown>): Promise<unknown> {
-    let fire: () => void = () => {};
-    const ended = new Promise<typeof HELD>((resolve) => (fire = () => resolve(HELD)));
-    const early = { seq, fire };
-    this.#endEarly = early;
-    try {
-      const first = await Promise.race([response, ended]);
-      if (first !== HELD) return first;
-    } finally {
-      if (this.#endEarly === early) this.#endEarly = null;
-    }
-    response.then(
-      () => {
-        if (this.autonomous) void this.#endAutonomous('end_turn');
-        else if (!this.busy && !this.#replaying) this.#scheduleSnapshot(); // the last request in flight is answered now
-      },
-      (error) => log.warning('The held response of an ended turn failed: %s', errorText(error)),
-    );
-    return { stopReason: 'end_turn' };
-  }
-
-  /** [text, token] of the note to put in front of this prompt (kept out of the user event and the fingerprint), or null. */
-  async #aibContext(): Promise<[string, unknown] | null> {
-    const start = this.onTurnStart;
-    const provider = this.contextForPrompt;
-    if (start) {
-      try {
-        await start(this);
-      } catch (error) {
-        log.exception(error, 'on_turn_start hook failed');
-      }
-    }
-    if (!provider) return null;
-    try {
-      const context = await provider(this);
-      return pyTruthy(context) ? context as [string, unknown] : null;
-    } catch (error) {
-      log.exception(error, 'The note for the prompt could not be made');
-      return null;
-    }
-  }
-
-  async #aibContextSent(context: [string, unknown] | null): Promise<void> {
-    const done = this.contextSent;
-    if (context && done) {
-      try {
-        await done(this, context[1]);
-      } catch (error) {
-        log.exception(error, 'Clearing the sent note failed');
-      }
-    }
-  }
-
   // ---- settings changes: applied now between turns, queued during a turn -----------------------
   static changeKey(kind: string, configId: unknown = null): string {
     return kind === 'mode' ? 'mode' : `config:${pyStr(configId)}`;
   }
 
-  /** Validated session/set_config_option, applied now. */
-  async setConfig(configId: unknown, value: unknown): Promise<void> {
-    const params = buildConfigRequest(this.settings, configId, value);
-    if (isModelsOption(this.settings, configId)) { // an agent's models list: session/set_model (unstable_setSessionModel)
-      await this.request('session/set_model', { sessionId: this.sessionId, modelId: value });
-      this.#modelSet(value);
-      return;
-    }
-    const result = await this.request('session/set_config_option', {
-      ...params,
-      sessionId: this.sessionId,
-    });
-    if (!isDict(result)) {
-      throw new TypeError(`'${pyTypeName(result)}' object is not iterable`);
-    }
-    Object.assign(this.settings, result);
-    if (this.serverModels) {
-      const all = Array.isArray(this.settings.configOptions) ? this.settings.configOptions : [];
-      const option = all.find((o) => isDict(o) && o.id === configId) as Json | undefined;
-      if (option && (option.category === 'model' || option.id === 'model') && isStr(value)) this.#serverCurrent = value;
-      this.#withModels(this.settings);
-    }
-  }
-
   /** A model-server chat (set by AIB): the server's models, and the model a new chat starts with. null for every other chat. */
   serverModels: { models: string[]; model: string } | null = null;
-  #serverCurrent = '';
-
-  /** withModelsOption, then (model-server chat) the server's models in place of the adapter's. */
-  #withModels(settings: unknown): void {
-    withModelsOption(settings);
-    if (this.serverModels) withServerModels(settings, this.serverModels.models, this.#serverCurrent || this.serverModels.model);
-  }
-
-  /** The model the agent took through session/set_model: its models reply and the model option AIB made from it. */
-  #modelSet(modelId: unknown): void {
-    if (!isStr(modelId)) return;
-    this.#serverCurrent = modelId;
-    if (isDict(this.settings.models)) (this.settings.models as Json).currentModelId = modelId;
-    this.#withModels(this.settings);
-  }
-
-  /** Validated session/set_mode, applied now. */
-  async setMode(modeId: unknown): Promise<void> {
-    checkMode(this.settings, modeId);
-    await this.request('session/set_mode', {
-      sessionId: this.sessionId,
-      modeId,
-    });
-    this.#modes().currentModeId = modeId;
-  }
-
-  /**
-   * A mode/config change from the UI. Idle: applied now (errors raise). Mid-turn: validated, then queued as the one pending value
-   * for that setting (last choice wins; picking the current value withdraws it) and applied in order when the turn ends, before
-   * the next prompt is accepted.
-   */
-  async changeSetting(
-    kind: unknown,
-    configId: unknown,
-    value: unknown,
-  ): Promise<Json> {
-    if (kind !== 'mode' && kind !== 'config') {
-      throw new ValueError('Unknown setting kind');
-    }
-    this.#refuseReadOnly();
-    if (this.closed || !this.ready || !this.sessionId) {
-      throw new ValueError('This connection is not ready');
-    }
-    if (kind === 'mode') checkMode(this.settings, value);
-    else buildConfigRequest(this.settings, configId, value);
-    const key = Connection.changeKey(kind, configId);
-    if (this.busy) {
-      this.pendingChanges.delete(key);
-      if (!pyEq(currentValue(this.settings, kind, configId), value)) {
-        this.pendingChanges.set(key, {
-          key,
-          kind,
-          configId: kind === 'config' ? configId : null,
-          value,
-          queuedAt: now(),
-        });
-      }
-      return {
-        queued: this.pendingChanges.has(key),
-        pendingChanges: this.pendingList(),
-      };
-    }
-    await this.#drainPending(); // leftovers from an earlier turn keep their order ahead of this change
-    if (kind === 'mode') await this.setMode(value);
-    else await this.setConfig(configId, value);
-    return { queued: false, pendingChanges: this.pendingList() };
-  }
-
-  cancelPending(key: unknown): Json[] {
-    if (!isStr(key) || !this.pendingChanges.delete(key)) {
-      throw new ValueError('That change is no longer queued');
-    }
-    return this.pendingList();
-  }
-
-  pendingList(): Json[] {
-    return [...this.pendingChanges.values()].map((v) => ({ ...v }));
-  }
-
-  async #applyPendingEntry(entry: PendingChange): Promise<void> {
-    let error: string | null = null;
-    try {
-      if (
-        !pyEq(
-          currentValue(this.settings, entry.kind, entry.configId),
-          entry.value,
-        )
-      ) {
-        if (entry.kind === 'mode') await this.setMode(entry.value);
-        else await this.setConfig(entry.configId, entry.value);
-      }
-    } catch (caught) {
-      log.warning(
-        'Applying a queued setting change failed: %s',
-        errorText(caught),
-      );
-      error = errorText(caught) || errorName(caught);
-    }
-    if (this.pendingChanges.get(entry.key) === entry) {
-      this.pendingChanges.delete(entry.key); // a newer choice made meanwhile stays queued
-    }
-    if (error) {
-      this.changeSeq += 1;
-      this.changeFailures.push({
-        seq: this.changeSeq,
-        key: entry.key,
-        kind: entry.kind,
-        configId: entry.configId,
-        value: entry.value,
-        message: clip(error, 500),
-        time: now(),
-      });
-      this.changeFailures.splice(
-        0,
-        Math.max(0, this.changeFailures.length - 5),
-      );
-    }
-  }
-
-  /** Apply queued changes one by one, in the order chosen. A refused change is recorded in changeFailures and dropped. */
-  async #drainPending(): Promise<void> {
-    while (true) {
-      if (this.closed || !this.ready) {
-        this.pendingChanges.clear();
-        return;
-      }
-      const entry = this.pendingChanges.values().next().value;
-      if (entry === undefined) return;
-      await this.#applyPendingEntry(entry);
-    }
-  }
-
-  /** The turn is over: apply what was queued, then (and only when nothing new was queued meanwhile) accept prompts again. */
-  async #finishTurn(): Promise<void> {
-    try {
-      await this.#drainPending();
-    } catch (error) {
-      log.exception(
-        error,
-        'Applying queued setting changes failed; dropping them',
-      );
-      this.pendingChanges.clear();
-    } finally {
-      while (true) {
-        if (!this.pendingChanges.size) {
-          this.busy = false;
-          break;
-        }
-        try {
-          await this.#drainPending();
-        } catch (error) {
-          log.exception(
-            error,
-            'Applying queued setting changes failed; dropping them',
-          );
-          this.pendingChanges.clear();
-        }
-      }
-    }
-  }
-
-  // ---- queued messages: written while the agent works, sent one per turn when it ends ---------------------
-  #queueChanged(): void {
-    if (this.#replaying) return; // the saved queue is the old AIB's; a replay must not overwrite it
-    const hook = this.recovery;
-    if (hook && this.sessionId) {
-      try {
-        hook.queueChanged(this);
-      } catch (error) {
-        log.exception(error, 'Saving the message queue failed');
-      }
-    }
-  }
-
-  #knownReceipt(clientMessageId: string): Receipt | null {
-    let receipt = this.promptReceipts.get(clientMessageId) ?? null;
-    if (!receipt && this.recovery && this.sessionId) {
-      receipt = this.recovery.receipt(this, clientMessageId);
-    }
-    return receipt;
-  }
-
-  queuePublic(light = false): Json {
-    return this.queue.public(light);
-  }
+  $serverCurrent = '';
 
   // ---- the landing lock (build plan 1b, 2.3, MF 2) ---------------------------------------------------------------------------
   /** The lock a landing in this chat's folder holds: while set, every prompt source queues instead of starting a turn. */
   landing: { id: string; owner: string; title: string; at: number } | null = null;
-  #landingTimer: ReturnType<typeof setTimeout> | null = null;
+  $landingTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * AIB hook (subagent worktrees): this child (its agentId) works in its own worktree AIB made, so a landing in this chat's folder
@@ -5800,986 +941,18 @@ export class Connection {
    */
   subagentInBackground: ((child: string) => boolean) | null = null;
 
-  /**
-   * '' when nothing runs in this chat (no turn, nothing queued or being sent), else why not. Running subagents don't count: a lead that
-   * always has one background subagent at work would otherwise never be idle, and the finished ones would never land or go.
-   */
-  landingIdleReason(): string {
-    if (this.closed || !this.ready) return 'the chat is not open';
-    if (this.busy) return 'a turn is running';
-    const q = this.queue;
-    if (q.inflight || q.items.length || q.steer.length) return 'messages are queued';
-    // Other subagents at work (in their own worktrees or not) never hold a landing back (owner 2026-11-24): a finished builder whose
-    // commits apply cleanly lands while the others work. Only this chat's own turn and queue count; conflicts are the landing's own.
-    return '';
-  }
-
-  /**
-   * The gate of a builder's landing (a subagent or a helper that finished): '' when its work may land now, even while this chat's turn
-   * runs (owner 2026-11-25: it lands soon after the builder ends, and the agent is told through the steer lane). Only what could
-   * clash with the files changing under the agent counts: one of its own edit or shell calls still open (the same for every provider:
-   * ACP tool calls), or a background shell of this chat that may be reading the folder (a test run, a build). A turn that merely runs,
-   * messages waiting, and other subagents at work never hold it back.
-   */
-  builderLandingReason(): string {
-    if (this.closed || !this.ready) return 'the chat is not open';
-    if (this.busy) {
-      for (const [id, seen] of this.#tools) {
-        if (!seen.main || seen.parent || seen.turn !== this.promptSeq || this.#bgTools.has(id)) continue;
-        if (seen.status === 'completed' || seen.status === 'failed') continue;
-        if (seen.edit) return 'the agent is editing a file';
-        if (seen.shell) return 'the agent is running a command';
-      }
-    }
-    if (this.backgroundShellsRunning()) return 'a background process is running';
-    for (const [id, background] of this.#bgTools) {
-      const seen = this.#tools.get(id);
-      if (background.state === 'running' && (!seen || (seen.main && !seen.parent))) return 'a background process is running';
-    }
-    return '';
-  }
-
-  /**
-   * One step: if the chat is idle, set the lock and answer ''; else the reason, and nothing changes. The same id may take it again
-   * (a renewal). It ends by itself after `ttlMs` without a renewal (the web process died mid-landing; its journal finishes the rest).
-   */
-  landingLock(id: string, owner: string, title: string, ttlMs: number, builder = false): string {
-    if (this.landing && this.landing.id !== id) return `“${this.landing.title}” is landing`;
-    if (!this.landing) {
-      const why = builder ? this.builderLandingReason() : this.landingIdleReason();
-      if (why) return why;
-      this.landing = { id, owner, title, at: Date.now() / 1000 };
-      this.queue.landing = title || 'a helper';
-      this.#queueChanged();
-    }
-    this.#armLanding(id, ttlMs);
-    return '';
-  }
-
-  landingRenew(id: string, ttlMs: number): boolean {
-    if (!this.landing || this.landing.id !== id) return false;
-    this.#armLanding(id, ttlMs);
-    return true;
-  }
-
-  /** Let go: what queued meanwhile goes out now, in order (the steer lane first). False when this id did not hold it. */
-  landingRelease(id: string): boolean {
-    if (!this.landing || this.landing.id !== id) return false;
-    this.landing = null;
-    this.queue.landing = '';
-    if (this.#landingTimer !== null) clearTimeout(this.#landingTimer);
-    this.#landingTimer = null;
-    this.#queueChanged();
-    void this.#steerPump().then(() => this.#queuePump()).catch((error) => log.exception(error, 'Sending after a landing failed'));
-    return true;
-  }
-
-  #armLanding(id: string, ttlMs: number): void {
-    if (this.#landingTimer !== null) clearTimeout(this.#landingTimer);
-    this.#landingTimer = setTimeout(() => {
-      this.#landingTimer = null;
-      if (this.landing?.id !== id) return;
-      log.warning('chat %s: the landing lock of “%s” was not renewed; letting it go', this.id, this.landing.title);
-      this.landingRelease(id);
-    }, Math.max(1, ttlMs));
-  }
-
-  /** A prompt that arrives while a landing holds the chat: it waits in the queue and goes when the landing ends. */
-  async #queueForLanding(text: unknown, clientMessageId: string | null, attachments: unknown): Promise<Json> {
-    const answer = await this.queueAdd(text, clientMessageId, attachments);
-    return { ...answer, accepted: true, landing: this.landing?.title ?? '' };
-  }
-
-  /**
-   * A chat rebuilt from the keeper: its saved queue goes on as it was (the turn never stopped), so it is not paused; messages sent
-   * while it worked go back into the steer lane (a steer the old AIB sent takes its answer from the record, B4).
-   */
-  async queueContinue(saved: SavedItem[] | unknown): Promise<void> {
-    this.queue.load(saved, '', true);
-    void this.#steerPump(); // not awaited: a steer the old AIB sent may still wait for the agent's answer
-    this.#scheduleArm();
-    await this.scheduleTick(); // messages whose time came while AIB was away go now ("sent late"), through the queue
-    await this.#queuePump();
-  }
-
-  /** After a host restart: the saved queue comes back PAUSED; nothing is sent until the user resumes. */
-  queueRestore(saved: SavedItem[] | unknown): void {
-    this.queue.load(saved, 'restart');
-    this.#scheduleArm();
-    void this.scheduleTick().catch((error) => log.exception(error, 'Sending scheduled messages failed'));
-  }
-
   // ---- send later: messages that wait for a time, then join the after-turn queue ------------------------------------------------
   /** Tests inject a fake clock (epoch ms) to move time without waiting. */
   scheduleNow: () => number = () => Date.now();
-  #scheduleTimer: ReturnType<typeof setTimeout> | null = null;
+  $scheduleTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** A time this late or later (ms after the scheduled time) counts as "sent late": AIB was not running at the time. */
   static readonly SCHEDULE_LATE_MS = 90_000;
 
-  #scheduleTime(at: unknown): number {
-    const when = typeof at === 'number' ? at : isStr(at) && at.trim() ? Number(at) : NaN;
-    if (!Number.isFinite(when) || when <= 0) throw new ValueError('Pick a date and time');
-    const now = this.scheduleNow();
-    if (when < now - 5000) throw new ValueError('That time has already passed');
-    if (when > now + 366 * 86_400_000) throw new ValueError('Pick a time within the next year');
-    return Math.round(when);
-  }
-
-  /** Put the text on the schedule. Same payload as queueAdd, plus `at` (epoch ms). */
-  async scheduleAdd(text: unknown, at: unknown, clientMessageId: string | null = null, attachments: unknown = null): Promise<Json> {
-    this.#refuseReadOnly();
-    const [, , , fingerprint] = this.preparePrompt(text, clientMessageId, attachments);
-    if (this.closed || !this.ready || !this.sessionId) throw new ValueError('This connection is not ready');
-    const q = this.queue;
-    const id = clientMessageId || crypto.randomUUID().replaceAll('-', '');
-    const known = q.scheduled.find((item) => item.id === id);
-    if (known) {
-      if (known.fingerprint !== fingerprint) throw new ValueError('This client message ID was already used for different text');
-      return { ok: true, duplicate: true, id, at: known.at, queue: q.public() };
-    }
-    const when = this.#scheduleTime(at);
-    if (q.scheduled.length >= MAX_SCHEDULED) throw new ValueError(`At most ${MAX_SCHEDULED} messages can be scheduled`);
-    q.scheduled.push({
-      id,
-      text: text as string,
-      attachments: pyTruthy(attachments) ? attachments as unknown[] : [],
-      fingerprint,
-      queuedAt: Date.now() / 1000,
-      at: when,
-    });
-    q.scheduled.sort((a, b) => a.at - b.at);
-    this.#queueChanged();
-    this.#scheduleArm();
-    return { ok: true, duplicate: false, id, at: when, queue: q.public() };
-  }
-
-  /** Change a scheduled message's text, its time, or both. */
-  async scheduleEdit(id: string, text: unknown = null, at: unknown = null): Promise<Json> {
-    const q = this.queue;
-    const item = q.scheduled.find((i) => i.id === id);
-    if (!item) throw new ValueError('That message is no longer scheduled (it may already have been sent)');
-    if (text !== null && text !== undefined) {
-      if (!isStr(text)) throw new ValueError('Message text is required');
-      const [, , , fingerprint] = this.preparePrompt(text, null, item.attachments);
-      item.text = text;
-      item.fingerprint = fingerprint;
-    }
-    if (at !== null && at !== undefined) {
-      item.at = this.#scheduleTime(at);
-      delete item.error;
-    }
-    q.scheduled.sort((a, b) => a.at - b.at);
-    this.#queueChanged();
-    this.#scheduleArm();
-    return { ok: true, queue: q.public() };
-  }
-
-  async scheduleCancel(id: string): Promise<Json> {
-    const q = this.queue;
-    const at = q.scheduled.findIndex((i) => i.id === id);
-    if (at < 0) throw new ValueError('That message is no longer scheduled (it may already have been sent)');
-    q.scheduled.splice(at, 1);
-    this.#queueChanged();
-    this.#scheduleArm();
-    return { ok: true, queue: q.public() };
-  }
-
-  /** The ↑ on a scheduled card: it goes now, as the queue row's Send now does (nothing running is cancelled). */
-  async scheduleSendNow(id: string): Promise<Json> {
-    const q = this.queue;
-    const item = q.scheduled.find((i) => i.id === id);
-    if (!item) throw new ValueError('That message is no longer scheduled (it may already have been sent)');
-    q.add(item.id, item.text, item.attachments, item.fingerprint);
-    q.scheduled.splice(q.scheduled.indexOf(item), 1);
-    this.#scheduleArm();
-    return await this.queueSendNow(id);
-  }
-
-  /** Move every message whose time has come into the after-turn queue and send as the queue allows. Safe to call at any time. */
-  async scheduleTick(): Promise<void> {
-    const q = this.queue;
-    if (this.closed || this.#replaying || !this.ready || !this.sessionId || !q.scheduled.length) return;
-    const now = this.scheduleNow();
-    const due = q.scheduled.filter((i) => i.at <= now);
-    if (!due.length) return;
-    for (const item of due) {
-      if (q.items.length >= MAX_ITEMS) break; // the queue is full: it stays scheduled and goes when there is room
-      const queued = q.add(item.id, item.text, item.attachments, item.fingerprint);
-      if (now - item.at > Connection.SCHEDULE_LATE_MS) queued.late = item.at;
-      q.scheduled.splice(q.scheduled.indexOf(item), 1);
-    }
-    this.#queueChanged();
-    await this.#queuePump();
-  }
-
-  #scheduleArm(): void {
-    if (this.#scheduleTimer !== null) clearTimeout(this.#scheduleTimer);
-    this.#scheduleTimer = null;
-    const q = this.queue;
-    if (this.closed || this.#closing || !q.scheduled.length) return;
-    const wait = Math.min(Math.max(q.scheduled[0].at - this.scheduleNow(), 0), 30_000);
-    const timer = setTimeout(() => {
-      this.#scheduleTimer = null;
-      this.scheduleTick().catch((error) => log.exception(error, 'Sending scheduled messages failed')).finally(() => this.#scheduleArm());
-    }, wait || 250);
-    Deno.unrefTimer(timer as unknown as number);
-    this.#scheduleTimer = timer;
-  }
-
-  /** Same payload as prompt(). A message that arrives while the agent is idle and nothing waits ahead of it is sent right away. */
-  async queueAdd(
-    text: unknown,
-    clientMessageId: string | null = null,
-    attachments: unknown = null,
-  ): Promise<Json> {
-    this.#refuseReadOnly();
-    const [, , , fingerprint] = this.preparePrompt(
-      text,
-      clientMessageId,
-      attachments,
-    );
-    if (this.closed || !this.ready || !this.sessionId) {
-      throw new ValueError('This connection is not ready');
-    }
-    const itemId = clientMessageId || crypto.randomUUID().replaceAll('-', '');
-    const receipt = clientMessageId ? this.#knownReceipt(itemId) : null;
-    const queued = this.queue.find(itemId) ??
-      (this.queue.inflight && this.queue.inflight.id === itemId ? this.queue.inflight : null);
-    const known = receipt ?? queued;
-    if (known) {
-      if (
-        (receipt ? receipt.fingerprint : (known as QueueItem).fingerprint) !==
-          fingerprint
-      ) {
-        throw new ValueError(
-          'This client message ID was already used for different text',
-        );
-      }
-      if (receipt && receipt.state === 'unknown') {
-        throw new PromptStateUnknown(PROMPT_UNKNOWN);
-      }
-      return {
-        accepted: true,
-        duplicate: true,
-        queued: queued !== null,
-        clientMessageId: itemId,
-        turnState: receipt ? receipt.state : 'queued',
-        queue: this.queue.public(),
-      };
-    }
-    this.queue.add(
-      itemId,
-      text as string,
-      pyTruthy(attachments) ? attachments as unknown[] : [],
-      fingerprint,
-    );
-    this.#queueChanged();
-    await this.#queuePump();
-    const has = this.queue.has(itemId);
-    return {
-      accepted: true,
-      duplicate: false,
-      queued: has,
-      clientMessageId: itemId,
-      turnState: has ? 'queued' : 'working',
-      queue: this.queue.public(),
-    };
-  }
-
-  // ---- messages sent while the agent works: the steer lane (steer-on-send) ----------------------------------------------------
-  /** `_meta.steering.supported` of the initialize result (top level, where the three adapters put it, or under agentCapabilities). */
-  steeringSupported(): boolean {
-    const initial = isDict(this.initial) ? this.initial : {};
-    const caps = get(initial, 'agentCapabilities');
-    for (const holder of [get(initial, '_meta'), isDict(caps) ? get(caps, '_meta') : null]) {
-      const steering = isDict(holder) ? get(holder, 'steering') : null;
-      if (isDict(steering) && steering.supported === true) return true;
-    }
-    return false;
-  }
-
-  /**
-   * What the composer keys on (snapshot `steerable`): the agent works and can read a message now. A prompt turn of ours, with an
-   * agent that can steer; or a cycle Claude Code started on its own (a background task ended): `_session/steering` would answer
-   * promptRequired there (claude-agent-acp steers only a prompt's turn, and the cycle is none), but a session/prompt is folded into
-   * the cycle, which it takes over ("A prompt folded into an autonomous turn owns that turn now"), and nothing running stops. So
-   * Send now prompts it (steer(), #steerLane). Codex starts no cycles of its own; one seen anyway is not steered.
-   */
-  steerable(): boolean {
-    if (!this.busy || !this.ready || this.closed || this.rebuildError) return false;
-    return this.autonomous ? this.#autonomousTakesPrompt() : this.steeringSupported();
-  }
-
-  /** Claude Code's own cycle takes a prompt in (see steerable()). */
-  #autonomousTakesPrompt(): boolean {
-    return this.#claudeHolds();
-  }
-
-  /** Is this open card a subagent's (a helper inside this chat), not the main agent's own? */
-  #cardIsHelpers(params: unknown): boolean {
-    if (!isDict(params)) return false;
-    const session = get(params, 'sessionId');
-    if (isStr(session) && session && this.sessionId && session !== this.sessionId) return true;
-    const call = get(params, 'toolCall');
-    if (!isDict(call)) return false;
-    const meta = get(call, '_meta');
-    const claude = isDict(meta) ? get(meta, 'claudeCode') : null;
-    const parent = isDict(claude) ? get(claude, 'parentToolUseId') : null;
-    if (isStr(parent) && parent) return true;
-    const id = get(call, 'toolCallId');
-    const seen = isStr(id) ? this.#tools.get(id) : undefined;
-    return !!(seen && (seen.parent || !seen.main));
-  }
-
-  /**
-   * The open cards a message sent now waits for (owner decision 5), oldest first; none: it may go in. Codex is not recorded with a card open: every card holds. Claude Code
-   * (claude-agent-acp) delivers a steer at priority `later` while the SDK awaits an answer, which leaves the card open (recording
-   * C4, IJAI-1191): a subagent's card does not hold it (owner, 2026-11-17), the main agent's own still does (decision 5).
-   */
-  #steerHolds(): HeldCard[] {
-    const past = this.#claudeHolds();
-    const out: HeldCard[] = [];
-    const clean = (t: unknown): string => isStr(t) ? t.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
-    const title = (params: unknown, card: 'approval' | 'question'): string => {
-      if (!isDict(params)) return '';
-      if (card === 'question') return clean(get(params, 'message'));
-      const call = get(params, 'toolCall');
-      return isDict(call) ? clean(get(call, 'title')) : '';
-    };
-    for (const [card, map] of [['approval', this.permissions], ['question', this.elicitations]] as const) {
-      for (const v of map.values()) {
-        if (past && this.#cardIsHelpers(v.params)) continue;
-        const session = isDict(v.params) ? get(v.params, 'sessionId') : null;
-        out.push({ card, title: title(v.params, card), sessionId: isStr(session) ? session : null, route: this.route(session) });
-      }
-    }
-    return out;
-  }
-
-  /**
-   * Claude Code aborts the foreground shell command a steer meets instead of moving it to the background (recordings with
-   * claude-agent-acp 0.97 and 0.102; the adapter always steers at priority `now`). Owner rule: Send now never cancels running work.
-   * So while the main agent's own foreground command runs, a message waits (held, "Sends when the running command finishes") and goes
-   * in at the command's end (tool update completed/failed or moved to the background). Codex's steer queues input without touching
-   * a running command, so it is not held.
-   */
-  #runningCommand(): HeldCard | null {
-    if (!this.#claudeHolds()) return null;
-    for (const [id, seen] of this.#tools) {
-      if (!seen.shell || !seen.main || seen.parent || seen.turn !== this.promptSeq || this.#bgTools.has(id)) continue;
-      if (seen.status === 'completed' || seen.status === 'failed') continue;
-      return { card: 'command', title: (seen.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), sessionId: null, route: 'main' };
-    }
-    return null;
-  }
-
-  /** A slash command the agent offers (or /doc): never sent into a running turn, it waits for the turn to end (B17). */
-  #isAgentCommand(text: unknown): boolean {
-    if (!isStr(text)) return false;
-    const m = /^\/(\S+)/.exec(pyStrip(text));
-    if (!m) return false;
-    return m[1] === 'doc' || this.breadth.commands.some((c) => c.name === m[1]);
-  }
-
-  /**
-   * Send now (POST /api/live/steer; Enter in the composer, a typed inbox or phone reply). Same payload as prompt(). AIB decides:
-   *   idle (or Claude Code's own cycle)        an ordinary prompt                                   state 'prompted'
-   *   working, the agent can steer             `_session/steering` now, through the steer lane      'injected' / 'sending' / 'fallback'
-   *   working, an approval or question open    held until it is answered (owner decision 5)        'held'
-   *   working, no steering, or a slash command  the after-turn queue, as today                       'queued'
-   * Retrying the same clientMessageId never sends twice.
-   */
-  async steer(text: unknown, clientMessageId: string | null = null, attachments: unknown = null): Promise<Json> {
-    this.#refuseReadOnly();
-    const [, , , fingerprint] = this.preparePrompt(text, clientMessageId, attachments);
-    if (this.closed || !this.ready || !this.sessionId) throw new ValueError('This connection is not ready');
-    const id = clientMessageId || crypto.randomUUID().replaceAll('-', '');
-    const q = this.queue;
-    const inLane = q.findSteer(id);
-    const queued = q.find(id) ?? (q.inflight && q.inflight.id === id ? q.inflight : null);
-    const receipt = clientMessageId ? this.#knownReceipt(id) : null;
-    if (inLane || queued || receipt) {
-      const known = inLane ? inLane.fingerprint : queued ? queued.fingerprint : receipt!.fingerprint;
-      if (known !== fingerprint) throw new ValueError('This client message ID was already used for different text');
-      if (!inLane && !queued && receipt!.state === 'unknown') throw new PromptStateUnknown(PROMPT_UNKNOWN);
-      return this.#steerAnswer(id, true);
-    }
-    const working = this.busy && !this.autonomous;
-    if (working && (this.#isAgentCommand(text) || this.forkSkillRefusal(text) || !this.steeringSupported())) {
-      await this.queueAdd(text, id, attachments);
-      return this.#steerAnswer(id, false);
-    }
-    if (!working && !q.steer.length) {
-      await this.prompt(text, id, attachments);
-      return this.#steerAnswer(id, false);
-    }
-    if (q.steer.length >= 50) throw new ValueError('At most 50 messages can wait to be sent');
-    q.steer.push({
-      id,
-      text: text as string,
-      attachments: pyTruthy(attachments) ? attachments as unknown[] : [],
-      fingerprint,
-      queuedAt: Date.now() / 1000,
-      state: 'sending',
-      heldReason: '',
-    });
-    this.#queueChanged();
-    await this.#steerPump();
-    return this.#steerAnswer(id, false);
-  }
-
-  /** The steer route's answer: where message `id` is now (state, see steer()), with the lanes. */
-  #steerAnswer(id: string, duplicate: boolean): Json {
-    const q = this.queue;
-    const inLane = q.findSteer(id);
-    const receipt = this.#knownReceipt(id);
-    let state: string;
-    if (inLane) state = inLane.state;
-    else if (q.find(id) || (q.inflight && q.inflight.id === id)) state = 'queued';
-    else if (receipt?.state === 'injected') state = 'injected';
-    else state = 'prompted';
-    return {
-      accepted: true,
-      duplicate,
-      clientMessageId: id,
-      id,
-      state,
-      turnState: receipt ? receipt.state : state === 'queued' ? 'queued' : 'working',
-      steerLane: q.steerPublic(),
-      queue: q.public(),
-    };
-  }
-
-  /** Run the steer lane: one item at a time, in order. Concurrent calls join the running pass (which then looks once more). */
-  #steerPump(): Promise<void> {
-    if (this.#steerRun) {
-      this.#steerAgain = true;
-      return this.#steerRun;
-    }
-    const run = (async () => {
-      try {
-        do {
-          this.#steerAgain = false;
-          await this.#steerLane();
-        } while (this.#steerAgain);
-      } catch (error) {
-        log.exception(error, 'Sending a message to the running turn failed');
-      } finally {
-        this.#steerRun = null;
-      }
-    })();
-    this.#steerRun = run;
-    return run;
-  }
-
-  async #steerLane(): Promise<void> {
-    const q = this.queue;
-    while (true) {
-      if (this.#replaying || this.rebuildError || this.closed || !this.ready || !this.sessionId) return;
-      const head = q.steer[0];
-      if (!head) return;
-      if ((!this.busy || this.autonomous) && this.landing) return; // a landing holds the folder: it goes when that lets go
-      if (!this.busy || this.autonomous) {
-        // Idle (or Claude Code's own cycle, which a prompt takes over): the first goes as an ordinary prompt and the rest are steered
-        // into its turn (B9). A helper's open card does not hold it: the main agent is idle (owner, 2026-11-12).
-        q.steer.shift();
-        if (head.state === 'fallback') {
-          // The agent said it did not take it (promptRequired): safe to send, even when a restart left its receipt "unknown".
-          this.promptReceipts.set(head.id, { fingerprint: String(head.fingerprint), state: 'steering' });
-        }
-        try {
-          await this.prompt(head.text, head.id, head.attachments.length ? head.attachments : null);
-        } catch (error) {
-          const unknown = error instanceof PromptStateUnknown;
-          if (!unknown) log.warning('Sending a held message failed: %s', errorText(error));
-          this.#steerToQueue([head], unknown ? STEER_RESTART_NOTE : clip(errorText(error), 300), unknown ? 'unknown' : 'error');
-        }
-        this.#queueChanged();
-        continue;
-      }
-      if (head.state === 'fallback') return; // B2: the agent's turn is over; it goes as a prompt once AIB has finished that turn
-      const holds = this.#steerHolds();
-      const running = holds.length ? null : this.#runningCommand();
-      if (running) holds.push(running);
-      if (holds.length) {
-        // Owner decision 5 (B8): never steered while an approval or question is open except a Claude
-        // Code subagent's (#steerHolds). The row names the card it waits for. Released by any close of the last card that holds it
-        // (#cardsChanged), and by the turn's end (#queueAfterTurn).
-        const first = holds[0];
-        let changed = false;
-        for (const item of q.steer) {
-          if (item.state !== 'sending' && item.state !== 'held') continue;
-          const was = JSON.stringify([item.state, item.heldReason, item.heldFor]);
-          item.state = 'held';
-          item.heldReason = first.card;
-          item.heldFor = { ...first };
-          if (JSON.stringify([item.state, item.heldReason, item.heldFor]) !== was) changed = true;
-        }
-        if (changed) this.#queueChanged();
-        return;
-      }
-      if (!this.steeringSupported()) { // cannot happen for a chat that took a steer; kept safe: they wait for the turn to end
-        const all = q.steer;
-        q.steer = [];
-        this.#steerToQueue(all, '');
-        this.#queueChanged();
-        return;
-      }
-      if (!this.#promptOut.isSet()) { // the prompt that started this turn is not written yet: a steer now would find no turn
-        await this.#promptOut.wait(30000);
-        continue;
-      }
-      let changed = false;
-      for (const item of q.steer) {
-        if (item.state === 'held') {
-          item.state = 'sending';
-          item.heldReason = '';
-          item.heldFor = null;
-          changed = true;
-        }
-      }
-      if (changed) this.#queueChanged();
-      const seq = this.promptSeq;
-      this.#steerInflight = head;
-      let outcome: string;
-      try {
-        const replayed = this.#replayedSteers.get(head.id);
-        this.#replayedSteers.delete(head.id);
-        outcome = replayed
-          ? ((await within(replayed, steerTiming.steerTimeoutSeconds * 1000)) || 'failed')
-          : await this.#sendSteer(head);
-      } finally {
-        this.#steerInflight = null;
-      }
-      const index = q.steer.indexOf(head);
-      if (index >= 0) {
-        if (outcome === 'injected') q.steer.splice(index, 1);
-        else if (outcome === 'promptRequired' && this.cancelSeq < seq) head.state = 'fallback';
-        else if (outcome === 'promptRequired') { // the user interrupted meanwhile: it waits with the others, paused
-          q.steer.splice(index, 1);
-          this.#steerToQueue([head], '', 'interrupted');
-        } else {
-          q.steer.splice(index, 1);
-          this.#steerToQueue([head], STEER_FAILED_NOTE);
-        }
-      }
-      this.#queueChanged();
-    }
-  }
-
-  /**
-   * One `_session/steering` (always with idleBehavior promptRequired: without it Claude Code starts a turn AIB never asked for,
-   * recording C3). Carries the <studio-context> note like a prompt (B12; no turn-start hook: no turn starts). Returns 'injected',
-   * 'promptRequired' or 'failed'. In the keeper the steer note goes first and the once-key stops a resend (B4).
-   */
-  async #sendSteer(item: SteerItem): Promise<string> {
-    let images: ImageBlock[];
-    let fileBlocks: Json[];
-    let files: FileSummary[];
-    try {
-      [images, fileBlocks, files] = this.preparePrompt(item.text, null, item.attachments.length ? item.attachments : null);
-    } catch (error) {
-      log.warning('A held message can no longer be sent: %s', errorText(error));
-      return 'failed';
-    }
-    let context: [string, unknown] | null = null;
-    const provider = this.contextForPrompt;
-    if (provider) {
-      try {
-        const made = await provider(this);
-        context = pyTruthy(made) ? made as [string, unknown] : null;
-      } catch (error) {
-        log.exception(error, 'The note for the prompt could not be made');
-      }
-    }
-    if (this.onUserPrompt) {
-      try {
-        this.onUserPrompt(this, item.text, item.id);
-      } catch (error) {
-        log.exception(error, 'on_user_prompt hook failed');
-      }
-    }
-    const blocks = [
-      ...(context ? [{ type: 'text', text: context[0] }] : []),
-      ...(pyStrip(item.text) ? [{ type: 'text', text: item.text }] : []),
-      ...fileBlocks,
-      ...images,
-    ];
-    this.promptReceipts.set(item.id, { fingerprint: String(item.fingerprint), state: 'steering' });
-    while (this.promptReceipts.size > 1000) this.promptReceipts.delete(this.promptReceipts.keys().next().value!);
-    this.#receiptChanged(item.id);
-    // The request may answer after the lane gave up on it (steerTimeoutSeconds): the late answer is still read (#steerLateAnswer).
-    const answer: Promise<{ result?: unknown; error?: unknown }> = this.request('_session/steering', {
-      sessionId: this.sessionId,
-      prompt: blocks,
-      _meta: { steering: { idleBehavior: 'promptRequired' } },
-    }, steerTiming.steerLateSeconds, {
-      note: (rpc) => ({ t: 'steer', rpc, receipt: item.id, text: item.text, files, fingerprint: item.fingerprint }),
-      once: `steer:${item.id}`,
-    }).then((result) => ({ result }), (error) => ({ error }));
-    const first = await within(answer, steerTiming.steerTimeoutSeconds * 1000);
-    if (first === false) {
-      log.warning('chat %s: the agent did not answer a message sent while it works within %s s', this.id, steerTiming.steerTimeoutSeconds);
-      this.#steerLateAnswer(item, answer, images, files, context);
-      return 'failed';
-    }
-    if (Object.hasOwn(first, 'error')) {
-      log.warning('The agent did not take a message sent while it works: %s', errorText(first.error));
-      return 'failed';
-    }
-    const outcome = isDict(first.result) ? first.result.outcome : null;
-    if (outcome === 'injected' || outcome === 'startedNewTurn') {
-      if (outcome === 'startedNewTurn') log.warning('chat %s: the agent started a turn of its own for a steer', this.id);
-      this.#steerLanded(item.id, item.text, images, files, String(item.fingerprint), item);
-      void this.#aibContextSent(context);
-      return 'injected';
-    }
-    if (outcome === 'promptRequired') return 'promptRequired';
-    log.warning('chat %s: a steer came back %s', this.id, pyRepr(outcome));
-    return 'failed';
-  }
-
-  /**
-   * A steer that timed out goes to the after-turn queue with its id (#steerLane), but stays unsent there (#queuePump) until its answer
-   * comes: taken (injected) → it leaves the queue and shows as sent while working, as if it had answered in time; anything else (not
-   * taken, an error, steerLateSeconds with no answer) → it is free to go after the turn, with the same id.
-   */
-  #steerLateAnswer(
-    item: SteerItem,
-    answer: Promise<{ result?: unknown; error?: unknown }>,
-    images: ImageBlock[],
-    files: FileSummary[],
-    context: [string, unknown] | null,
-  ): void {
-    this.#steerLate.add(item.id);
-    void answer.then((late) => {
-      this.#steerLate.delete(item.id);
-      const outcome = !Object.hasOwn(late, 'error') && isDict(late.result) ? late.result.outcome : null;
-      if ((outcome === 'injected' || outcome === 'startedNewTurn') && !this.closed) {
-        const q = this.queue;
-        const at = q.items.findIndex((i) => i.id === item.id);
-        if (at >= 0) q.items.splice(at, 1);
-        log.info('chat %s: the agent took message %s late; it is not sent again', this.id, item.id);
-        this.#steerLanded(item.id, item.text, images, files, String(item.fingerprint), item);
-        void this.#aibContextSent(context);
-      } else {
-        log.info('chat %s: the late answer to message %s: not taken (%s)', this.id, item.id, pyRepr(outcome));
-      }
-      this.#queueChanged();
-      void this.#queuePump();
-    });
-  }
-
-  /**
-   * The agent took a steered message: it shows as the user's bubble (no adapter echoes it), tagged `steered` ("Sent while working"),
-   * and its receipt is final. Live and on a keeper rebuild alike, right where the answer is in the record.
-   */
-  #steerLanded(id: string, text: string, images: ImageBlock[], files: FileSummary[], fingerprint: string, item?: SteerItem): void {
-    const receipt = this.promptReceipts.get(id);
-    if (receipt) receipt.state = 'injected';
-    else this.promptReceipts.set(id, { fingerprint, state: 'injected' });
-    this.promptReceipts.get(id)!.sent = true;
-    this.#receiptChanged(id);
-    const userEvent: Json = { text, attachments: images, sessionId: this.sessionId, clientMessageId: id, steered: true };
-    if (files.length) userEvent.files = files;
-    this.event('user', userEvent);
-    if (!this.busy || this.autonomous) return;
-    this.#steerTurn.injected += 1;
-    this.#steerTurn.outputAfter = false;
-    this.#clearSettle();
-    if (item && isCodexFamily(this.provider)) this.#steerTurn.unread.push(item);
-  }
-
-  /**
-   * B13: codex-acp v1 can drop a steer that lands as its turn completes. A steer with no main-session output after it by the turn's
-   * end goes back in the queue, paused, with a note (a new id, so Resume really sends it again).
-   */
-  #steerUnread(): void {
-    const unread = this.#steerTurn.unread;
-    this.#steerTurn.unread = [];
-    if (!unread.length) return;
-    const q = this.queue;
-    q.items.unshift(...unread.map((i) => ({
-      id: crypto.randomUUID().replaceAll('-', ''),
-      text: i.text,
-      attachments: i.attachments,
-      fingerprint: i.fingerprint,
-      queuedAt: Date.now() / 1000,
-      lease: null,
-      note: CODEX_UNREAD_NOTE,
-    })));
-    q.hold = 'unknown';
-    this.#queueChanged();
-  }
-
-  /** Steer-lane items into the after-turn queue, at its front (after an item being sent now), in order. */
-  #steerToQueue(items: SteerItem[], note: string, hold = ''): void {
-    if (!items.length) return;
-    const q = this.queue;
-    const at = q.sendNow ? Math.min(1, q.items.length) : 0;
-    q.items.splice(at, 0, ...items.map((i) => ({
-      id: i.id,
-      text: i.text,
-      attachments: i.attachments,
-      fingerprint: i.fingerprint,
-      queuedAt: i.queuedAt,
-      lease: null,
-      note,
-    })));
-    if (hold && !q.sendNow && !q.hold) q.hold = hold;
-  }
-
-  /** Interrupt (B8): what waits in the steer lane moves to the after-turn queue, paused; a steer in flight is decided by its answer. */
-  #laneInterrupted(): void {
-    const q = this.queue;
-    const inflight = this.#steerInflight && q.steer.includes(this.#steerInflight) ? this.#steerInflight : null;
-    const moved = q.steer.filter((i) => i !== inflight);
-    if (!moved.length) return;
-    q.steer = inflight ? [inflight] : [];
-    this.#steerToQueue(moved, '', 'interrupted');
-    this.#queueChanged();
-  }
-
-  /** An approval or question was answered or withdrawn: with none left that holds them, held messages go now (B8); else their
-   *  rows name the card they wait for now (#steerLane). */
-  #cardsChanged(): void {
-    if (!this.queue.steer.length) return;
-    void this.#steerPump();
-  }
-
-  /**
-   * Edit lease on a queued message: acquire (open the editor), renew (editor still open), save (new text, releases), cancel
-   * (releases). While the lease is held the message is never sent; if it is the first one, nothing is sent at all.
-   */
-  async queueEdit(
-    itemId: string,
-    action: unknown,
-    leaseId: string | null = null,
-    text: unknown = null,
-  ): Promise<Json> {
-    if (!['acquire', 'renew', 'save', 'cancel'].includes(action as string)) {
-      throw new ValueError('Unknown edit action');
-    }
-    const q = this.queue;
-    if (action === 'acquire') {
-      const item = q.acquire(itemId, leaseId);
-      return {
-        ok: true,
-        leaseId: item.lease!.id,
-        text: item.text,
-        queue: q.public(),
-      };
-    }
-    if (action === 'renew') {
-      q.renew(itemId, leaseId);
-      return { ok: true, queue: q.public() };
-    }
-    if (action === 'cancel') {
-      q.release(itemId, leaseId);
-    } else {
-      const item = q.find(itemId); // MessageQueue._leased
-      if (item === null) {
-        throw new ValueError(
-          'That message is no longer queued (it may already have been sent)',
-        );
-      }
-      if (!item.lease || item.lease.id !== leaseId) {
-        throw new ValueError('This edit is no longer open');
-      }
-      if (!isStr(text)) throw new ValueError('Message text is required');
-      const [, , , fingerprint] = this.preparePrompt(
-        text,
-        null,
-        item.attachments,
-      );
-      item.text = text;
-      item.fingerprint = fingerprint;
-      item.note = '';
-      q.release(itemId, leaseId);
-    }
-    this.#queueChanged();
-    await this.#queuePump();
-    return { ok: true, queue: this.queuePublic() };
-  }
-
-  async queueRemove(itemId: string): Promise<Json> {
-    if (this.queue.inflight && this.queue.inflight.id === itemId) {
-      throw new ValueError('That message is already being sent');
-    }
-    this.queue.remove(itemId);
-    this.#queueChanged();
-    await this.#queuePump();
-    return { ok: true, queue: this.queuePublic() };
-  }
-
-  async queueMove(itemId: string, toIndex: unknown): Promise<Json> {
-    this.queue.move(itemId, toIndex);
-    this.#queueChanged();
-    await this.#queuePump();
-    return { ok: true, queue: this.queuePublic() };
-  }
-
-  async queueResume(): Promise<Json> {
-    this.queue.resume();
-    this.#queueChanged();
-    await this.#queuePump();
-    return { ok: true, queue: this.queuePublic() };
-  }
-
-  /** Interrupt the running turn and send this message first. Refused while its editor is open. */
-  /** `interrupt`: the composer's "Interrupt and send", which stops the turn on purpose; the queue row's Send now never does. */
-  async queueSendNow(itemId: string, interrupt = false): Promise<Json> {
-    const q = this.queue;
-    const item = q.find(itemId);
-    if (item === null) {
-      throw new ValueError(
-        'That message is no longer queued (it may already have been sent)',
-      );
-    }
-    if (q.leaseActive(item)) {
-      throw new ValueError('Save or cancel the edit first');
-    }
-    // Owner, 2026-11-16: Send now never stops what runs. When the agent can read a message mid-turn it goes through the steer lane
-    // (`_session/steering`): Claude Code moves a running command or foreground helper to the background ("it was not interrupted") and
-    // reads the message now; its background helpers go on. An agent that cannot steer (or a slash command, which never goes
-    // mid-turn) waits at the front of the queue (owner, 2026-11-23: never cancels).
-    // Claude Code's own cycle (steerable(): it takes a prompt in): any message goes through the lane, which prompts it, commands too.
-    const ownCycle = this.busy && this.autonomous;
-    if (
-      !interrupt && this.steerable() && q.steer.length < 50 &&
-      (ownCycle || (!this.#isAgentCommand(item.text) && !this.forkSkillRefusal(item.text)))
-    ) {
-      q.remove(itemId);
-      if (!q.items.length && q.hold === 'interrupted') q.hold = '';
-      q.steer.push({
-        id: item.id,
-        text: item.text,
-        attachments: item.attachments,
-        fingerprint: item.fingerprint,
-        queuedAt: item.queuedAt,
-        state: 'sending',
-        heldReason: '',
-      });
-      this.#queueChanged();
-      void this.#steerPump(); // the lane shows it as sending; the route never waits for the agent's answer
-      return { ok: true, steered: true, queue: this.queuePublic() };
-    }
-    q.move(itemId, 0);
-    item.lease = null;
-    q.hold = '';
-    // Owner, 2026-11-23: Send now never cancels running work. An agent that cannot steer keeps the message at the front of the
-    // queue and gets it the moment this turn ends (#queueAfterTurn pumps). Only the composer's explicit "Interrupt and send" cancels.
-    const cancelling = interrupt && this.busy;
-    q.sendNow = cancelling;
-    this.#queueChanged();
-    if (cancelling) {
-      this.cancel();
-      if (!this.busy) this.queue.sendNow = false; // the turn ended on its own meanwhile
-    }
-    await this.#queuePump();
-    return { ok: true, queue: this.queuePublic() };
-  }
-
-  /** A turn just ended: decide whether the queue must wait for the user. Runs before the turn's own requests are withdrawn. */
-  #queueNoteOutcome(result: unknown, failed: boolean): void {
-    const q = this.queue;
-    if (q.sendNow || !q.items.length || q.hold) return;
-    const needs = this.permissions.size + this.elicitations.size +
-      (this.auth ? 1 : 0);
-    if (failed) q.hold = 'error';
-    else if (needs) q.hold = 'needs_you';
-    else if (isDict(result) && result.stopReason === 'cancelled' && this.cancelSeq >= this.promptSeq) {
-      // B14: only the user's own Interrupt pauses the queue; a 'cancelled' the agent reports on its own (after a steer) does not.
-      q.hold = 'interrupted';
-    }
-  }
-
-  async #queueAfterTurn(): Promise<void> {
-    if (this.queue.sendNow) {
-      this.queue.sendNow = false;
-      this.queue.hold = '';
-    }
-    if (this.elsewhere && this.queue.steer.length) {
-      // open elsewhere: AIB let go (or is about to): what still waits in the steer lane is kept in the queue, never sent elsewhere's way
-      const waiting = this.queue.steer.splice(0);
-      this.#steerToQueue(waiting, `Not sent: this chat is open in ${this.elsewhere.app}.`);
-    }
-    this.#queueChanged();
-    await this.#steerPump(); // the steer lane first: a message the agent could not take mid-turn goes now, as a prompt
-    await this.#queuePump();
-  }
-
   /** Send the first waiting message if nothing stops it: idle, no hold, no edit lease on it, nobody waiting on the user. */
-  #restartAsked = false;
+  $restartAsked = false;
 
-  async #queuePump(): Promise<void> {
-    let asked = false;
-    while (true) {
-      if (this.#replaying || this.rebuildError) return;
-      const q = this.queue;
-      if (
-        this.closed || !this.ready || this.busy || !this.sessionId || this.landing || this.elsewhere ||
-        q.inflight || !q.items.length || q.pauseReason() || q.steer.length // the steer lane goes first
-      ) return;
-      if (this.permissions.size || this.elicitations.size || this.auth) return;
-      if (this.#steerLate.has(q.items[0].id)) return; // its steer may still land (#steerLateAnswer), which then pumps again
-      // the best moment to restart a stale chat: right before a queued or scheduled message goes out (restart first, then send)
-      if (this.#restartAsked) return; // another pump pass is asking AIB now
-      if (this.beforeQueuedSend && !asked) {
-        asked = true;
-        this.#restartAsked = true;
-        let replaced = false;
-        try {
-          replaced = await this.beforeQueuedSend();
-        } catch (error) {
-          log.exception(error, 'Restarting a stale chat before a queued message failed');
-        } finally {
-          this.#restartAsked = false;
-        }
-        if (replaced || this.closed) return; // the restarted chat sends the queue it was given
-        continue; // re-check every guard: the chat may have changed while it was asked
-      }
-      const item = q.items.shift()!;
-      q.inflight = item;
-      let failure: [string, string] | null = null;
-      let result: Json | null = null;
-      try {
-        // receipts make a retry of the same id harmless
-        result = await this.prompt(
-          item.text,
-          item.id,
-          pyTruthy(item.attachments) ? item.attachments : null,
-        );
-      } catch (error) {
-        if (error instanceof PromptStateUnknown) {
-          failure = [
-            'unknown',
-            'AIB cannot tell whether this one was already sent. Remove it, or press Resume to send it again.',
-          ];
-        } else {
-          log.warning('Sending a queued message failed: %s', errorText(error));
-          failure = [
-            errorText(error).includes('Wait for the current turn') ? '' : 'error',
-            clip(errorText(error), 300),
-          ];
-        }
-      }
-      q.inflight = null;
-      if (!failure && item.late && !(result ?? {}).duplicate) { // a scheduled message that went out after its time
-        this.recordedEvent('studio_note', { message: `Sent late (scheduled ${scheduleStamp(item.late)})`, sessionId: this.sessionId });
-      }
-      if (failure) {
-        item.note = failure[0] ? failure[1] : '';
-        q.items.unshift(item);
-        if (failure[0]) q.hold = failure[0];
-      }
-      this.#queueChanged();
-      if (failure || !(result ?? {}).duplicate || this.busy) return;
-    }
-  }
-
-  #staleError(key: unknown, what: string): ValueError {
+  $staleError(key: unknown, what: string): ValueError {
     const reason = isStr(key) ? this.withdrawn.get(key) : undefined;
     return new ValueError(
       reason ? `This ${what} was withdrawn: ${reason}` : `This ${what} is no longer pending`,
@@ -6792,7 +965,7 @@ export class Connection {
     return isStr(sessionId) && this.knownSessions.has(sessionId) ? 'subagent' : 'unknown';
   }
 
-  #noteWithdrawn(
+  $noteWithdrawn(
     key: string,
     kind: string,
     reason: string,
@@ -6811,7 +984,7 @@ export class Connection {
     });
   }
 
-  #replyQuietly(rpcId: unknown, result: Json): void {
+  $replyQuietly(rpcId: unknown, result: Json): void {
     try {
       this.write({ jsonrpc: '2.0', id: rpcId, result });
     } catch (error) {
@@ -6819,7 +992,7 @@ export class Connection {
     }
   }
 
-  #receiptChanged(clientMessageId: string): void {
+  $receiptChanged(clientMessageId: string): void {
     const hook = this.recovery;
     const found = this.promptReceipts.get(clientMessageId);
     if (hook && found) hook.receiptChanged(this, clientMessageId, { ...found });
@@ -6888,7 +1061,7 @@ export class Connection {
    * change. The per-chat facts in the prompt (folders, house rules) are left out: a restart sends them again as they are.
    */
   promptBase(servers: unknown[] | null = null): string {
-    const own = (servers ?? (this.#sessionMcp.length ? this.#sessionMcp : this.mcpServers) ?? []).some(isOwnArtifactEntry);
+    const own = (servers ?? (this.$sessionMcp.length ? this.$sessionMcp : this.mcpServers) ?? []).some(isOwnArtifactEntry);
     if (!own) return '';
     const parts = [this.wsl ? WSL_ARTIFACT_PROMPT : ARTIFACT_PROMPT];
     if (this.worktree) parts.push(WORKTREE_PROMPT.replace('{branch}', this.worktree.branch ?? '').replaceAll('{base}', this.worktree.base || 'the project branch'));
@@ -6907,9 +1080,9 @@ export class Connection {
    * Not a blocker: a waiting question, a queued message, a scheduled message.
    */
   restartBlocker(): string {
-    if (this.closed || this.#closing) return 'closed';
+    if (this.closed || this.$closing) return 'closed';
     if (this.rebuildError) return 'read-only';
-    if (!this.ready || !this.sessionId || this.#replaying) return 'opening';
+    if (!this.ready || !this.sessionId || this.$replaying) return 'opening';
     if (this.busy) return 'mid-turn';
     if (this.permissions.size || this.elicitations.size) return 'mid-turn';
     if (this.auth) return 'signing in';
@@ -6963,495 +1136,14 @@ export class Connection {
     return { additionalDirectories: [...dirs] };
   }
 
-  /**
-   * What the allow-rules matcher knows of this chat and request (tool name from the earlier tool_call, the current mode). A WSL chat
-   * (allow/linux.ts): its Linux folder as `cwd`, the project's ref as `project`, no scratch folder, and a LinuxView over the distro
-   * facts AIB has (`linux.since`: older facts count as unknown; `linux.needs`: a recording view that collects what to ask).
-   */
-  allowContext(params: unknown, linux: { since?: number; needs?: LinuxNeeds } = {}): MatchContext {
-    const call = isDict(params) ? get(params, 'toolCall') : null;
-    const id = isDict(call) ? get(call, 'toolCallId') : null;
-    const mode = get(this.#modes(), 'currentModeId');
-    const seen = isStr(id) ? this.#tools.get(id) : undefined;
-    // a WSL chat gets no subagent hooks yet (they'd fail open), so no subagent worktree either
-    if (this.wsl) {
-      const view = new LinuxView(this.#linuxFacts, { since: linux.since ?? 0, needs: linux.needs ?? null, distro: this.wsl.distro });
-      const claude = isClaudeFamily(this.provider) ? view.base()?.claude ?? (view.recording ? COLLECT_FACTS : null) : undefined;
-      return {
-        provider: this.provider,
-        toolName: seen?.toolName ?? null,
-        mcp: seen?.mcp ?? null,
-        mode: isStr(mode) ? mode : null,
-        cwd: this.agentCwd,
-        project: this.projectRoot || this.cwd,
-        scratch: null,
-        stateDir: null,
-        ...(claude !== undefined ? { facts: claude } : {}),
-        linux: view,
-      };
-    }
-    // Approval parity (subagent worktrees, design 2.4): a subagent's call in the worktree AIB recorded for it is checked against that
-    // worktree exactly as the main agent's is against the folder (same rules, same protected names); never its parent folder.
-    const worktree = seen?.parent && this.subagentWorktree ? this.subagentWorktree(seen.parent) : null;
-    return {
-      provider: this.provider,
-      toolName: seen?.toolName ?? null,
-      mcp: seen?.mcp ?? null,
-      mode: isStr(mode) ? mode : null,
-      cwd: worktree ?? this.cwd,
-      project: this.projectRoot || this.cwd,
-      scratch: this.scratchDir,
-      stateDir: this.allowGate?.stateDir ?? null,
-      ...(this.swarm?.role === 'helper' && this.worktree ? { helper: { testCmd: this.helperTestCmd() } } : {}),
-    };
-  }
-
-  /**
-   * Allow rules: answer a matching request with the agent's allow-once option. Live: match, record the decision (before the
-   * answer), record a `permission_auto` event, then answer. Keeper replay: never match again; the decision log says whether the
-   * live AIB answered it (its event note and its answer are in the record and replay on their own).
-   */
-  #allowByRule(message: Json, params: Json, seenKey: string, since?: number): boolean {
-    const gate = this.allowGate!;
-    const options = get(params, 'options', []);
-    const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
-    if (!allow || !isStr(allow.optionId)) return false; // no allow-once: never auto-answered (fail closed)
-    const once = `${seenKey}:${this.#requestsSeen.get(seenKey) ?? 0}`;
-    if (this.#replaying) {
-      const done = gate.log.find(this.id, once);
-      return !!done && !done.swept;
-    }
-    let result;
-    try {
-      result = gate.decide(params, since === undefined ? this.allowContext(params) : this.allowContext(params, { since }));
-    } catch (error) {
-      log.exception(error, 'Allow rules: the matcher failed; the request asks');
-      return false;
-    }
-    if (!result.allow) return false;
-    gate.log.record(this.id, {
-      key: once,
-      optionId: allow.optionId,
-      ruleId: result.ruleId,
-      label: result.label,
-      flagged: result.flagged,
-      time: Date.now(),
-    });
-    this.recordedEvent('permission_auto', {
-      sessionId: get(params, 'sessionId'),
-      params: { sessionId: get(params, 'sessionId'), toolCall: get(params, 'toolCall') },
-      ruleId: result.ruleId,
-      label: result.label,
-      flagged: result.flagged,
-    });
-    this.write({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'selected', optionId: allow.optionId } } });
-    return true;
-  }
-
-  /** A permission request becomes a card the user answers. */
-  #permissionCard(message: Json, params: Json): void {
-    const key = hex(12);
-    this.permissions.set(key, { rpcId: message.id, params });
-    this.event('permission', { key, params });
-  }
-
   // ---- allow rules in a WSL chat (allow/linux.ts, allow/wsl_facts.ts) ---------------------------------------------------------
   /** What AIB has learnt of this WSL chat's distro for the matcher. */
-  #linuxFacts = new LinuxFacts();
+  $linuxFacts = new LinuxFacts();
   /** The start's fetch of the chat folder and the base facts (AIB waits for it briefly). */
   allowWarming: Promise<void> | null = null;
 
-  #wslFactsSource(): WslFactsSource {
-    const wsl = this.wsl!;
-    const agentEnv = (): Record<string, string> => {
-      let test: Record<string, string> = {};
-      try {
-        test = wslTestHomeEnv();
-      } catch { /* no test home: the helper's own */ }
-      return { ...(wsl.env ?? {}), ...test, ...(this.env ?? {}) };
-    };
-    return {
-      host: () => {
-        const host = peekWslHost(wsl.distro); // never starts the distro
-        return host && host.state === 'ready' ? host : null;
-      },
-      cwd: () => this.agentCwd,
-      claude: isClaudeFamily(this.provider),
-      claudeDir: () => {
-        const env = agentEnv();
-        return env.CLAUDE_CONFIG_DIR || (env.HOME?.startsWith('/') ? `${env.HOME.replace(/\/+$/, '')}/.claude` : undefined);
-      },
-      pathEnv: () => (wsl.env ? agentEnv().PATH : undefined),
-    };
-  }
-
-  /** Fetch the distro facts deciding `params` needs (facts read before `since`, a factsNow() value, count as unknown). */
-  async allowPrefetch(params: Json, since: number): Promise<void> {
-    if (!this.allowGate || !this.wsl) return;
-    await prefetchWslFacts(
-      this.allowGate,
-      this.#linuxFacts,
-      this.#wslFactsSource(),
-      params,
-      since,
-      (view) => this.allowContext(params, { since, needs: view.opts.needs ?? undefined }),
-    );
-  }
-
-  /** Once at start: the chat folder and the base facts (PATH folders, AIB's folders, Claude settings). */
-  allowWarm(): Promise<void> {
-    if (!this.allowGate || !this.wsl) return Promise.resolve();
-    return this.allowWarming ??= warmWslFacts(this.#linuxFacts, this.#wslFactsSource()).catch((error) => {
-      log.exception(error, 'Allow rules: could not read the distro facts');
-    });
-  }
-
-  /** A WSL chat's live request: the facts first, then the same decision as #allowByRule, else a card. */
-  async #allowByRuleWsl(message: Json, params: Json, seenKey: string): Promise<void> {
-    const since = factsNow();
-    try {
-      await this.allowPrefetch(params, since);
-    } catch (error) {
-      log.exception(error, 'Allow rules: could not read the distro facts; the request asks');
-    }
-    if (this.closed) return;
-    if (this.#allowByRule(message, params, seenKey, since)) return;
-    this.#permissionCard(message, params);
-  }
-
   /** Drafts of cards shown lately, by key: "Save the rule anyway?" after another device answered first. */
-  #allowSeen = new Map<string, { params: Json; draft: Json | null }>();
-
-  #allowRemember(key: string, v: AgentRequest): Json | null {
-    const draft = this.#allowChoice(v);
-    if (draft && !this.#allowSeen.has(key)) {
-      this.#allowSeen.set(key, { params: v.params, draft });
-      while (this.#allowSeen.size > 50) this.#allowSeen.delete(this.#allowSeen.keys().next().value!);
-    }
-    return draft;
-  }
-
-  /** The card's "Always allow" choice for a waiting request (cached on it). */
-  #allowChoice(v: AgentRequest): Json | null {
-    if (!this.allowGate) return null;
-    if (!v.allow) {
-      try {
-        v.allow = this.allowGate.drafts(v.params, this.allowContext(v.params)) as unknown as Json;
-      } catch (error) {
-        log.exception(error, 'Allow rules: could not draft a rule');
-        v.allow = { project: { offer: true, available: false, reason: "AIB can't read this request.", hideAgentAlways: false }, off: '' };
-      }
-    }
-    return v.allow;
-  }
-
-  /** The waiting card's params and draft (allow-answer), or null when it is no longer waiting. */
-  allowPending(key: string): { params: Json; draft: Json | null; waiting: boolean } | null {
-    const pending = this.permissions.get(key);
-    if (pending) {
-      const draft = this.#allowChoice(pending);
-      this.#allowSeen.set(key, { params: pending.params, draft });
-      while (this.#allowSeen.size > 50) this.#allowSeen.delete(this.#allowSeen.keys().next().value!);
-      return { params: pending.params, draft, waiting: true };
-    }
-    const seen = this.#allowSeen.get(key);
-    return seen ? { ...seen, waiting: false } : null;
-  }
-
-  /**
-   * After a rule is saved: answer the waiting cards it now covers, each through permission() (so a phone answering the same card
-   * at the same moment gets "stale"). The decision is logged as `swept`: on replay the card still appears, then the answer
-   * removes it.
-   */
-  allowSweep(): number {
-    if (!this.allowGate || this.#replaying) return 0;
-    let n = 0;
-    for (const [key, pending] of [...this.permissions]) if (this.#sweepOne(key, pending)) n++;
-    return n;
-  }
-
-  /** allowSweep for a WSL chat: each waiting card's distro facts are fetched again first. */
-  async allowSweepWsl(): Promise<number> {
-    if (!this.allowGate || this.#replaying || !this.wsl) return 0;
-    let n = 0;
-    for (const [key, pending] of [...this.permissions]) {
-      const since = factsNow();
-      try {
-        await this.allowPrefetch(pending.params, since);
-      } catch { /* unknown facts: it keeps asking */ }
-      if (this.closed || this.permissions.get(key) !== pending) continue;
-      if (this.#sweepOne(key, pending, since)) n++;
-    }
-    return n;
-  }
-
-  /** One waiting card answered by the rules (logged as swept), or false. */
-  #sweepOne(key: string, pending: AgentRequest, since?: number): boolean {
-    const gate = this.allowGate!;
-    const options = get(pending.params, 'options', []);
-    const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
-    if (!allow || !isStr(allow.optionId)) return false;
-    const ctx = since === undefined ? this.allowContext(pending.params) : this.allowContext(pending.params, { since });
-    const result = gate.decide(pending.params, ctx);
-    if (!result.allow) return false;
-    const seenKey = JSON.stringify(pending.rpcId);
-    gate.log.record(this.id, {
-      key: `${seenKey}:${this.#requestsSeen.get(seenKey) ?? 0}`,
-      optionId: allow.optionId,
-      ruleId: result.ruleId,
-      label: result.label,
-      flagged: result.flagged,
-      time: Date.now(),
-      swept: true,
-    });
-    this.recordedEvent('permission_auto', {
-      sessionId: get(pending.params, 'sessionId'),
-      params: { sessionId: get(pending.params, 'sessionId'), toolCall: get(pending.params, 'toolCall') },
-      ruleId: result.ruleId,
-      label: result.label,
-      flagged: result.flagged,
-      key,
-    });
-    this.permission(key, allow.optionId);
-    return true;
-  }
-
-  /** True when a permission request is for AIB's studio_artifact tool on a chat AIB gave that tool to. */
-  ownArtifactTool(params: unknown): boolean {
-    if (!(this.mcpServers ?? []).some(isOwnArtifactEntry)) return false;
-    const call = isDict(params) ? get(params, 'toolCall') : null;
-    if (!isDict(call)) return false;
-    const id = get(call, 'toolCallId');
-    return isAutoApproved(ownToolAction(call, isStr(id) ? this.#tools.get(id)?.mcp : null));
-  }
-
-  permission(key: unknown, option: unknown): void {
-    this.#refuseReadOnly();
-    const pending = isStr(key) ? this.permissions.get(key) : undefined;
-    if (!pending) throw this.#staleError(key, 'approval');
-    const options = get(pending.params, 'options', []);
-    if (
-      option !== null && option !== undefined &&
-      !(options as unknown[]).map((o) => pget(o, 'optionId')).some((id) => pyEq(id, option))
-    ) {
-      throw new ValueError('Unknown approval option');
-    }
-    const outcome = option === null || option === undefined ? { outcome: 'cancelled' } : { outcome: 'selected', optionId: option };
-    this.write({ jsonrpc: '2.0', id: pending.rpcId, result: { outcome } });
-    this.permissions.delete(key as string);
-    this.#cardsChanged();
-    // A background helper of Claude Code asks between turns: once answered, a message queued meanwhile can go.
-    if (!this.busy && this.#claudeHolds()) void this.#queuePump();
-  }
-
-  receiveElicitation(rpcId: unknown, params: unknown): void {
-    if (
-      !isDict(params) ||
-      !['form', 'url'].includes(get(params, 'mode') as string)
-    ) {
-      throw new ValueError('Only form and url elicitation modes are supported');
-    }
-    const sid = get(params, 'sessionId');
-    const requestId = get(params, 'requestId');
-    const idOk = (value: unknown) => isStr(value) || isInt(value);
-    if (sid !== null) {
-      if (!isStr(sid) || !this.knownSessions.has(sid)) {
-        throw new ValueError('Elicitation references an unknown session');
-      }
-      if (requestId !== null) {
-        throw new ValueError(
-          'Session-scoped elicitation cannot include requestId',
-        );
-      }
-    } else if (requestId === null || !idOk(requestId)) {
-      throw new ValueError(
-        'Request-scoped elicitation requires a string or integer requestId',
-      );
-    }
-    if (requestId !== null && !idOk(requestId)) {
-      throw new ValueError('Invalid elicitation requestId');
-    }
-    if (
-      get(params, 'toolCallId') !== null &&
-      (sid === null || !isStr(params.toolCallId))
-    ) {
-      throw new ValueError('toolCallId requires a session-scoped request');
-    }
-    if (
-      !isStr(get(params, 'message')) || pyLen(params.message as string) > 10000
-    ) {
-      throw new ValueError(
-        'Elicitation message must be a string of at most 10000 characters',
-      );
-    }
-    if (params.mode === 'url') validateUrlRequest(params);
-    else validateSchema(get(params, 'requestedSchema'));
-    const key = tokenUrlsafe(18);
-    if (this.elicitations.size >= 100) {
-      throw new ValueError('Too many pending elicitation requests');
-    }
-    if (
-      params.mode === 'url' &&
-      [...this.elicitations.values()].some((p) => pyEq(get(p.params, 'elicitationId'), params.elicitationId))
-    ) {
-      throw new ValueError(
-        'A request with this elicitationId is already pending',
-      );
-    }
-    this.elicitations.set(key, { rpcId, params });
-    this.event('elicitation', { key, params });
-  }
-
-  answerElicitation(
-    key: unknown,
-    action: unknown,
-    content: unknown = null,
-  ): void {
-    if (!['accept', 'decline', 'cancel'].includes(action as string)) {
-      throw new ValueError('Action must be accept, decline, or cancel');
-    }
-    this.#refuseReadOnly();
-    const pending = isStr(key) ? this.elicitations.get(key) : undefined;
-    if (!pending) throw this.#staleError(key, 'request');
-    const result: Json = { action };
-    if (action === 'accept' && get(pending.params, 'mode') === 'url') {
-      // the person confirmed they completed the out-of-band interaction
-    } else if (action === 'accept') {
-      if (!Object.hasOwn(pending.params, 'requestedSchema')) {
-        const error = new Error("'requestedSchema'");
-        error.name = 'KeyError';
-        throw error;
-      }
-      result.content = validateContent(
-        pending.params.requestedSchema,
-        content ?? {},
-      );
-    }
-    this.write({ jsonrpc: '2.0', id: pending.rpcId, result });
-    this.elicitations.delete(key as string);
-    this.#cardsChanged();
-    if (this.ready && !this.busy && this.#claudeHolds()) void this.#queuePump(); // as permission() does
-    if (action !== 'accept' && !this.ready && !this.closed) {
-      const what = get(pending.params, 'mode') === 'form' ? 'a question' : 'a link request';
-      const said = clip(pyStr(get(pending.params, 'message', '')), 120);
-      this.abortSetup(
-        `You ${
-          action === 'decline' ? 'declined' : 'cancelled'
-        } ${what} while the conversation was opening ("${said}"), so it was not opened.`,
-      );
-    }
-  }
-
-  /** elicitation/complete: the agent says an out-of-band URL interaction finished. */
-  completeElicitation(params: unknown): void {
-    const eid = isDict(params) ? get(params, 'elicitationId') : null;
-    if (!isStr(eid)) return;
-    for (const [key, item] of [...this.elicitations]) {
-      if (
-        get(item.params, 'mode') === 'url' &&
-        get(item.params, 'elicitationId') === eid
-      ) {
-        this.#replyQuietly(item.rpcId, { action: 'accept' });
-        this.elicitations.delete(key);
-        this.#noteWithdrawn(
-          key,
-          'elicitation',
-          'The agent reported this request complete.',
-          get(item.params, 'sessionId'),
-        );
-      }
-    }
-    this.#cardsChanged();
-  }
-
-  /** Withdraw UI for an agent-originated RPC; IDs are direction-specific. */
-  cancelIncomingRequest(requestId: unknown): void {
-    if (!isStr(requestId) && !isInt(requestId)) return;
-    const reason = 'The agent cancelled this request.';
-    this.#clearPermissions({ rpcId: requestId, reason });
-    this.#clearElicitations({ rpcId: requestId, reason });
-    this.#cardsChanged();
-  }
-
-  #clearPermissions(
-    {
-      sessionId = null,
-      rpcId = null,
-      reason = 'The session ended.',
-      scoped = false,
-      everything = false,
-      except = null,
-    }: {
-      sessionId?: unknown;
-      rpcId?: unknown;
-      reason?: string;
-      scoped?: boolean;
-      everything?: boolean;
-      except?: ((sessionId: unknown) => boolean) | null;
-    },
-  ): void {
-    for (const [key, item] of [...this.permissions]) {
-      const sid = isDict(item.params) ? get(item.params, 'sessionId') : null;
-      if (except?.(sid)) continue;
-      const rpcMatch = rpcId !== null && typeof item.rpcId === typeof rpcId &&
-        item.rpcId === rpcId;
-      if (
-        everything || rpcMatch ||
-        (sessionId !== null && (sid === sessionId || sid === null)) ||
-        (scoped && sid !== null)
-      ) {
-        this.#replyQuietly(item.rpcId, { outcome: { outcome: 'cancelled' } });
-        this.permissions.delete(key);
-        this.#noteWithdrawn(key, 'permission', reason, sid);
-      }
-    }
-  }
-
-  #clearElicitations(
-    {
-      sessionId = null,
-      requestId = null,
-      rpcId = null,
-      reason = 'The session ended.',
-      scoped = false,
-      except = null,
-    }: {
-      sessionId?: unknown;
-      requestId?: unknown;
-      rpcId?: unknown;
-      reason?: string;
-      scoped?: boolean;
-      except?: ((sessionId: unknown) => boolean) | null;
-    },
-  ): void {
-    const everything = sessionId === null && requestId === null &&
-      rpcId === null && !scoped;
-    for (const [key, item] of [...this.elicitations]) {
-      const params = item.params;
-      if (except?.(get(params, 'sessionId'))) continue;
-      const rpcMatch = rpcId !== null && typeof item.rpcId === typeof rpcId &&
-        item.rpcId === rpcId;
-      const ownRequest = get(params, 'requestId');
-      const requestMatch = requestId !== null &&
-        typeof ownRequest === typeof requestId && ownRequest === requestId;
-      const sid = get(params, 'sessionId');
-      if (
-        everything || rpcMatch || requestMatch ||
-        (sessionId !== null && sid === sessionId) || (scoped && sid !== null)
-      ) {
-        this.#replyQuietly(item.rpcId, { action: 'cancel' });
-        this.elicitations.delete(key);
-        this.#noteWithdrawn(key, 'elicitation', reason, sid);
-      }
-    }
-  }
-
-  /** The turn that raised these requests is over; nothing may answer them any more. */
-  withdrawTurnRequests(): void {
-    const reason = 'The turn that asked for this has ended.';
-    this.#clearPermissions({ sessionId: this.sessionId, reason });
-    this.#clearElicitations({ sessionId: this.sessionId, reason });
-  }
+  $allowSeen = new Map<string, { params: Json; draft: Json | null }>();
 
   /** Stop one child only when the agent announced a cancel capability for it. */
   cancelSubagent(childSessionId: unknown): void {
@@ -7497,20 +1189,20 @@ export class Connection {
   }
 
   cancel(subagent: unknown = null): void {
-    this.#refuseReadOnly();
+    this.$refuseReadOnly();
     if (subagent !== null && subagent !== undefined) {
       return this.cancelSubagent(subagent);
     }
     // ACP prompt-turn cancellation: answer every pending permission request with the `cancelled` outcome FIRST (recorded as
     // withdrawn), then notify session/cancel; the agent ends the turn with stopReason `cancelled`.
     this.cancelSeq = this.promptSeq;
-    if (this.busy && !this.autonomous) this.#laneInterrupted();
+    if (this.busy && !this.autonomous) this.$laneInterrupted();
     // B7: a helper still running in the background from an earlier turn goes on, so its approval stays open; everything else this
     // turn asked (the main session's, a helper the turn waits for) is answered cancelled, as before.
     // A helper this turn started with run_in_background (or moved to the background) is one too (owner, 2026-11-16).
     const background = (sid: unknown) =>
-      isStr(sid) && sid !== this.sessionId && this.#liveHelpers.has(sid) && (!this.#turnHelpers.has(sid) || this.#inBackground(sid));
-    this.#clearPermissions({
+      isStr(sid) && sid !== this.sessionId && this.$liveHelpers.has(sid) && (!this.$turnHelpers.has(sid) || this.#inBackground(sid));
+    this.$clearPermissions({
       everything: true,
       except: background,
       reason: 'The turn was cancelled.',
@@ -7526,46 +1218,46 @@ export class Connection {
         if (!isOsOrValueError(error)) throw error;
       }
     }
-    this.#clearElicitations({
+    this.$clearElicitations({
       scoped: true,
       except: background,
       reason: 'The turn was cancelled.',
     });
-    if (this.autonomous) void this.#endAutonomous('cancelled'); // stopped: its result may never come
+    if (this.autonomous) void this.$endAutonomous('cancelled'); // stopped: its result may never come
   }
 
   async #waitExit(ms: number): Promise<boolean> {
-    if (!this.#exited) return true;
-    return (await within(this.#exited.then(() => true), ms)) === true;
+    if (!this.$exited) return true;
+    return (await within(this.$exited.then(() => true), ms)) === true;
   }
 
   async close(): Promise<void> {
-    if (this.#closing) return;
-    this.#closing = true;
-    if (this.#scheduleTimer !== null) clearTimeout(this.#scheduleTimer);
-    this.#scheduleTimer = null;
+    if (this.$closing) return;
+    this.$closing = true;
+    if (this.$scheduleTimer !== null) clearTimeout(this.$scheduleTimer);
+    this.$scheduleTimer = null;
     let stop = false;
     let deadChannel = false;
     try {
       for (const key of [...this.permissions.keys()]) {
         if (!this.rebuildError) this.permission(key, null);
       }
-      this.#clearElicitations({});
+      this.$clearElicitations({});
       if (this.busy && !this.rebuildError) this.cancel();
       if (this.channel !== null && this.channel.unreachable) {
         // The keeper connection is already gone: nothing can answer a stdin close, so waiting for the exit would only run out the
         // clock. Go straight to the kill step below (one short wait).
-        this.#stdinClosed = true;
+        this.$stdinClosed = true;
         stop = true;
         deadChannel = true;
       } else if (this.channel !== null) {
         if (this.rebuildError) await this.channel.claim().catch(() => 0); // read-only until now: take it over to stop it
-        this.#stdinClosed = true;
+        this.$stdinClosed = true;
         void this.channel.closeStdin(); // ACP adapters exit on it, as on a closed pipe
         if (!(await this.#waitExit(5000))) stop = true;
       } else if (this.process !== null) {
-        this.#stdinClosed = true;
-        this.#stdin?.close().catch(() => {});
+        this.$stdinClosed = true;
+        this.$stdin?.close().catch(() => {});
         if (!(await this.#waitExit(5000))) stop = true;
       }
     } catch (error) {
@@ -7585,18 +1277,18 @@ export class Connection {
     }
     if (this.channel) this.channelRemoved = this.channel.remove(); // closed: its keeper record is not needed any more
     // its history store is kept (owner rule 2026-11-17): reopening the conversation goes on in it under this chat id
-    await this.#historyFinish();
+    await this.$historyFinish();
     this.closed = true;
     if (this.closedAt === null) this.closedAt = now();
     this.ready = false;
-    await this.#shutdownCaps();
+    await this.$shutdownCaps();
     this.releaseLease();
     if (this.recovery) this.recovery.connectionClosed(this);
     if (this.process !== null) {
-      await within(this.#readTask!, 2000);
-      await within(this.#errorTask!, 2000);
+      await within(this.$readTask!, 2000);
+      await within(this.$errorTask!, 2000);
       // A pipe still open after all that (a grandchild outside the job kept it): stop reading it so nothing leaks.
-      for (const reader of [this.#stdoutReader, this.#stderrReader]) {
+      for (const reader of [this.$stdoutReader, this.$stderrReader]) {
         try {
           await reader?.cancel();
         } catch { /* released: read to the end */ }
@@ -7618,17 +1310,17 @@ export class Connection {
     const iso = (t: number | null) => t ? new Date(Math.floor(t) * 1000).toISOString().slice(0, 19) + 'Z' : null;
     const exact = (t: number | null) => t ? new Date(Math.round(t * 1000)).toISOString() : null; // compared with mark times
     const started = this.busy && !this.closed ? this.turnStartedAt : null;
-    const at = this.#now();
+    const at = this.$now();
     const helpers = this.closed
       ? 0
-      : [...this.#liveHelpers].filter((h) => at - (this.#helperSince.get(h) ?? at) < INBOX.HELPER_CAP_SECONDS).length;
+      : [...this.$liveHelpers].filter((h) => at - (this.$helperSince.get(h) ?? at) < INBOX.HELPER_CAP_SECONDS).length;
     // a finished subagent's own runs count as the chat's background processes: the chat is working while they go on
     const shells = !this.closed && (this.#shellsRunning(at) || this.#ownRuns() > 0);
     const work = helpers > 0 || shells;
-    if (this.#hadWork && !work && !this.#workEndedAt) this.#workEndedAt = at; // a shell's end is seen by looking
-    if (work) this.#workEndedAt = null;
+    if (this.#hadWork && !work && !this.$workEndedAt) this.$workEndedAt = at; // a shell's end is seen by looking
+    if (work) this.$workEndedAt = null;
     this.#hadWork = work;
-    const ended = this.#workEndedAt;
+    const ended = this.$workEndedAt;
     const followUntil = ended && ended >= (this.turnEndedAt ?? 0) ? ended + followUpSeconds() : null;
     const facts = {
       helpers,
@@ -7637,8 +1329,8 @@ export class Connection {
       failedAt: exact(this.turnFailedAt),
       error: this.turnFailedAt ? this.turnError : '',
       failKind: this.turnFailedAt ? INBOX.classifyError(this.turnError) : '',
-      asksAt: exact(this.#asks?.at ?? null),
-      question: this.#asks?.question ?? '',
+      asksAt: exact(this.$asks?.at ?? null),
+      question: this.$asks?.question ?? '',
       ...this.#stallFacts(at, needs, helpers, shells, exact),
     };
     return {
@@ -7657,15 +1349,15 @@ export class Connection {
    * TOOL_CAP_SECONDS (a long npm test is work). lastOutputAt always (seconds, exact ISO).
    */
   #stallFacts(at: number, needs: number, helpers: number, shells: boolean, exact: (t: number | null) => string | null): Json {
-    const out: Json = { lastOutputAt: exact(this.#lastOutputAt) };
-    if (this.#stall) return { ...out, stalledAt: exact(this.#stall.at), stallKind: this.#stall.kind, stallStep: this.#stall.step };
-    const quietSince = this.#lastOutputAt ?? this.turnStartedAt;
+    const out: Json = { lastOutputAt: exact(this.$lastOutputAt) };
+    if (this.$stall) return { ...out, stalledAt: exact(this.$stall.at), stallKind: this.$stall.kind, stallStep: this.$stall.step };
+    const quietSince = this.$lastOutputAt ?? this.turnStartedAt;
     if (!this.busy || this.closed || needs || helpers || shells || !quietSince || at - quietSince < quietSeconds()) return out;
-    const toolRuns = [...this.#tools.values()].some((t) =>
+    const toolRuns = [...this.$tools.values()].some((t) =>
       t.turn === this.promptSeq && t.status !== 'completed' && t.status !== 'failed' && at - t.since < INBOX.TOOL_CAP_SECONDS
     );
     if (toolRuns) return out;
-    return { ...out, stalledAt: exact(quietSince), stallKind: 'quiet', stallStep: this.#lastStep };
+    return { ...out, stalledAt: exact(quietSince), stallKind: 'quiet', stallStep: this.$lastStep };
   }
 
   /** A background shell started within the inbox's cap still runs (the OS is asked at most every 2 s). */
@@ -7679,22 +1371,22 @@ export class Connection {
   }
 
   #shellsRunning(at: number): boolean {
-    if (!this.#bgShells.size) return false;
-    const seen = this.#shellsSeen;
+    if (!this.$bgShells.size) return false;
+    const seen = this.$shellsSeen;
     if (!seen || at - seen.at >= 2 || at < seen.at) {
       const running = this.backgroundShellsRunning();
-      for (const task of [...this.#shellSince.keys()]) if (!this.#bgShells.has(task)) this.#shellSince.delete(task);
-      const capped = running && [...this.#bgShells.keys()].some((t) => at - (this.#shellSince.get(t) ?? at) < INBOX.SHELL_CAP_SECONDS);
-      this.#shellsSeen = { at, running: capped };
+      for (const task of [...this.$shellSince.keys()]) if (!this.$bgShells.has(task)) this.$shellSince.delete(task);
+      const capped = running && [...this.$bgShells.keys()].some((t) => at - (this.$shellSince.get(t) ?? at) < INBOX.SHELL_CAP_SECONDS);
+      this.$shellsSeen = { at, running: capped };
     }
-    return this.#shellsSeen!.running;
+    return this.$shellsSeen!.running;
   }
 
   /**
    * The turn just ended: does its last reply ask you something (inbox-rules.js asksOf)? The reply is the main session's message
    * after its last tool call. The same on a rebuild from the keeper's record, which replays the same events.
    */
-  #noteAsks(): void {
+  $noteAsks(): void {
     const parts: string[] = [];
     let size = 0;
     let step: string | null = null; // the main tool call the walk stopped at (the turn's last step)
@@ -7724,16 +1416,16 @@ export class Connection {
     }
     const words = parts.reverse().join('');
     const found = INBOX.asksOf(words.slice(-16384)); // the reply's end: one chunk may be megabytes
-    this.#asks = found.asks ? { at: this.#now(), question: found.question } : null;
+    this.$asks = found.asks ? { at: this.$now(), question: found.question } : null;
     // S2: the turn ended after a tool call with no word from the agent after it ("no final message")
-    this.#stall = step !== null && !words.trim() ? { at: this.#now(), kind: 'silent_end', step: step || this.#lastStep } : null;
+    this.$stall = step !== null && !words.trim() ? { at: this.$now(), kind: 'silent_end', step: step || this.$lastStep } : null;
   }
 
   /** Wire form of this connection. light=true is the sidebar listing: no events and no permission bodies. */
   public(after = 0, light = false): Json {
     const events = this.events;
     // Being rebuilt from the keeper's record: no events yet, and the page keeps its cursor (the rebuilt chat numbers them the same).
-    const rebuilding = this.#replaying && !this.rebuildError && !this.closed;
+    const rebuilding = this.$replaying && !this.rebuildError && !this.closed;
     // A cursor past the end belongs to another numbering (an older record without its AIB events): send everything again.
     const stale = !rebuilding && after > this.sequence;
     const data: Json = {
@@ -7802,7 +1494,7 @@ export class Connection {
       permissions: light ? [] : [...this.permissions].map(([k, v]) => ({
         key: k,
         params: v.params,
-        ...(this.allowGate ? { allow: this.#allowRemember(k, v) } : {}),
+        ...(this.allowGate ? { allow: this.$allowRemember(k, v) } : {}),
         route: this.route(isDict(v.params) ? get(v.params, 'sessionId') : null),
       })),
       elicitations: [...this.elicitations].map(([k, v]) => ({
@@ -7828,3 +1520,19 @@ export class Connection {
     return store && this.sessionId ? store.unknownReceipts(this.provider, this.sessionId) : [];
   }
 }
+
+// Methods moved to their own modules (no change): the interface gives Connection their types, installMethods their code.
+export interface Connection extends ReplayMethods, HistoryMethods, ToolMethods, IoMethods, SetupMethods, HandoffMethods, TurnMethods, SteerMethods, QueueMethods, AllowMethods {}
+installMethods(Connection, replayMethods, historyMethods, toolMethods, ioMethods, setupMethods, handoffMethods, turnMethods, steerMethods, queueMethods, allowMethods);
+
+// Moved out (no change); re-exported so every importer of this file keeps working.
+export { MAX_EVENTS, RuntimeError, TimeoutError, BrokenPipeError, errorName, errorText, pyEq, sortedCompactJson } from './conn_util.ts';
+export { ThreadEvent, PyTextLines } from './thread_text.ts';
+export type { ClientCapsLike, CapsFactory, Receipt, ConnectionRecovery, SessionLease, AuthState, PendingChange, ConnectionOptions, ContinueStore, WslSpawn } from './conn_types.ts';
+export { SNAPSHOT_VERSION, MAX_SNAPSHOT_BYTES, HISTORY_FLUSH_MS, HISTORY_HELPER_TAIL, historyV2, EVENT_CHUNK_BYTES, KEEPER_LOST } from './conn_limits.ts';
+export type { CheckpointStep } from './conn_limits.ts';
+export { isFixture, guardRealAgent, HOME_VARS, TEMP_VARS, testHomeEnv, guardRealAgentAuth, resolveProgram } from './launch_env.ts';
+export { TOOLS_LOADING, COMMANDS_RULE, ARTIFACT_PROMPT, WSL_ARTIFACT_PROMPT, CODEX_MCP_STARTUP_WAIT_MS, WORKTREE_PROMPT, SHARED_FOLDER_PROMPT, LOCAL_ONLY_WORKTREE_PROMPT, IGNORED_SHARED_WORKTREE, SHARED_FOLDER_CONTEXT, sharedFolderNote } from './prompts.ts';
+export { OWN_ARTIFACT_TOOL, SWARM_TOOL_NAMES, ownToolName, ownToolAction, backgroundTask, NotStoppable, isOwnArtifactEntry, subagentEnd } from './tool_tracking.ts';
+export { STEER_AGENTS, TERMINAL_SIGNIN_PROVIDERS, steerTiming, isAgentBusyError, busyRetry, STEER_FAILED_NOTE, CODEX_UNREAD_NOTE } from './conn_steer.ts';
+export { REPLAY_WINDOW_BYTES, ReplayWindow, outsideTurns } from './replay_window.ts';
