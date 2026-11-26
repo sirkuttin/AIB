@@ -67,7 +67,8 @@ class Lab {
     }
     for (const method of Object.keys(this.helper)) {
       if (!method.startsWith('subagent.')) continue;
-      this.host.handlers[method as keyof typeof this.host.handlers] = async (p) => this.out(await this.helper[method](this.into(p) as Json));
+      this.host.handlers[method as keyof typeof this.host.handlers] = async (p) =>
+        this.out(await this.helper[method](this.into(p) as Json));
     }
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
   }
@@ -84,7 +85,9 @@ class Lab {
   out(value: unknown): unknown {
     if (typeof value === 'string') {
       for (const [linux, win] of [['/home/u/app', this.work], ['/home/u/aibdata', this.data]]) {
-        if (value === win || value.startsWith(win + SEP) || value.startsWith(win + '/')) return linux + value.slice(win.length).replaceAll('\\', '/');
+        if (value === win || value.startsWith(win + SEP) || value.startsWith(win + '/')) {
+          return linux + value.slice(win.length).replaceAll('\\', '/');
+        }
       }
       return value;
     }
@@ -100,7 +103,14 @@ class Lab {
 
   aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const aib = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const aib = new Aib({
+      claudeLauncher: import.meta.filename!,
+      codexLauncher: import.meta.filename!,
+      nodeCommand: 'node',
+      stateDir: this.state,
+      port: 0,
+      ownersDir: null,
+    }, { keeper });
     aib.ownerProbe = () => null;
     aib.connectionFactory = (command, cwd, provider, options) => {
       this.commands.push([...command]);
@@ -178,7 +188,8 @@ const mirrors = (lab: Lab) => Object.values(readSubagents(lab.state));
 const log = (project: string) => runGit(project, 'log', '--format=%s', '-n', '20');
 
 Deno.test({
-  name: 'wsl subagent hooks: a WSL Claude chat gets hooks on the helper socket and its key; its subagent works in a worktree in the distro and lands as one commit',
+  name:
+    'wsl subagent hooks: a WSL Claude chat gets hooks on the helper socket and its key; its subagent works in a worktree in the distro and lands as one commit',
   ...T,
   async fn() {
     await keeperBinary();
@@ -188,10 +199,17 @@ Deno.test({
     const hooks = c.subagentHooks!;
     assertEquals(hooks.off, '');
     assert(c.subagentIsolationOn());
-    const commands = Object.values((hooks.settings as { hooks: Record<string, { hooks: { command: string }[] }[]> }).hooks).flatMap((g) => g.flatMap((x) => x.hooks.map((h) => h.command)));
+    const commands = Object.values((hooks.settings as { hooks: Record<string, { hooks: { command: string }[] }[]> }).hooks).flatMap((g) =>
+      g.flatMap((x) => x.hooks.map((h) => h.command))
+    );
     assertEquals(commands.length, 4);
-    for (const command of commands) assert(command.startsWith(`"${KEEPER}" hook `) && command.includes(`--helper-socket "${SOCKET}"`), command);
-    assert(commands.some((x) => x.includes('hook pre-tool') && x.endsWith('|| exit 2')) && commands.some((x) => x.includes('hook worktree-create')));
+    for (const command of commands) {
+      assert(command.startsWith(`"${KEEPER}" hook `) && command.includes(`--helper-socket "${SOCKET}"`), command);
+    }
+    assert(
+      commands.some((x) => x.includes('hook pre-tool') && x.endsWith('|| exit 2')) &&
+        commands.some((x) => x.includes('hook worktree-create')),
+    );
     assertEquals(env.AIB_HOOK_CHAT, c.id);
     assert(/^[0-9a-f]{20,}$/.test(key) || key.length > 16, `a hook key: ${key}`);
     assert(env.AIB_HOOK_READONLY.split(',').includes('Explore'));
@@ -264,7 +282,10 @@ Deno.test({
       return own(name, body);
     };
     // a read-only type passes without a worktree (the forwarder passes it itself; AIB agrees)
-    const explore = await hook('pre-tool', { ...agentCall('toolu_0'), tool_input: { subagent_type: 'Explore', description: 'look', prompt: 'x' } });
+    const explore = await hook('pre-tool', {
+      ...agentCall('toolu_0'),
+      tool_input: { subagent_type: 'Explore', description: 'look', prompt: 'x' },
+    });
     assertEquals([explore.status, explore.proofOk, explore.body], [200, true, '{}']);
     assertEquals(mirrors(lab).length, 0);
     // EnterWorktree and Workflow are refused with a reason
@@ -289,13 +310,14 @@ Deno.test({
     assert(woke[0].op === 'steer' && woke[0].text.includes('did not land') && woke[0].text.includes('tracked.txt'), woke[0].text);
     assert(woke[0].text.includes(`${rec.branch}-landable`), woke[0].text);
     assertEquals(runGit(lab.work, 'show', '--name-only', '--format=', `${rec.branch}-landable`).trim(), 'tracked.txt');
-    assertEquals(runGit(lab.work, 'show', 'main:tracked.txt'), 'main line\n', 'nothing landed over the folder\'s own commit');
+    assertEquals(runGit(lab.work, 'show', 'main:tracked.txt'), 'main line\n', "nothing landed over the folder's own commit");
     assertEquals(runGit(lab.work, 'stash', 'list').trim(), '');
   },
 });
 
 Deno.test({
-  name: 'wsl subagent hooks: a distro that cannot answer refuses cleanly (no worktree, nothing in the folder); wrong keys and other chats are refused',
+  name:
+    'wsl subagent hooks: a distro that cannot answer refuses cleanly (no worktree, nothing in the folder); wrong keys and other chats are refused',
   ...T,
   async fn() {
     await keeperBinary();
@@ -309,7 +331,10 @@ Deno.test({
     assertEquals([failed.status, failed.proofOk], [200, true]);
     const reason = JSON.parse(failed.body).hookSpecificOutput;
     assertEquals(reason.permissionDecision, 'deny');
-    assert(String(reason.permissionDecisionReason).includes("couldn't make a worktree for this subagent in the distro: the helper crashed"), reason.permissionDecisionReason);
+    assert(
+      String(reason.permissionDecisionReason).includes("couldn't make a worktree for this subagent in the distro: the helper crashed"),
+      reason.permissionDecisionReason,
+    );
     delete lab.host.handlers['subagent.hook'];
     // the distro is stopped: the same, never waiting for it to start
     lab.host.state = 'stopped';
@@ -339,23 +364,53 @@ Deno.test({
     assertEquals((await hook('rm -rf', {})).status, 404);
     // not JSON
     const nonce = 'ab'.repeat(16);
-    const bad = await aib.wslToolCall({ distro: 'Ubuntu', key: '', conversation: c.id, body: 'not json', headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: c.id, [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' } });
+    const bad = await aib.wslToolCall({
+      distro: 'Ubuntu',
+      key: '',
+      conversation: c.id,
+      body: 'not json',
+      headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: c.id, [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' },
+    });
     assertEquals(JSON.parse(bad.body).status, 400);
     // another distro's call, and a chat that is not open here
-    const other = await aib.wslToolCall({ distro: 'Debian', key: '', conversation: c.id, body: '{}', headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: c.id, [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' } });
+    const other = await aib.wslToolCall({
+      distro: 'Debian',
+      key: '',
+      conversation: c.id,
+      body: '{}',
+      headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: c.id, [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' },
+    });
     assertEquals(other.status, 401);
-    const unknown = await aib.wslToolCall({ distro: 'Ubuntu', key: '', conversation: 'f'.repeat(32), body: '{}', headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: 'f'.repeat(32), [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' } });
+    const unknown = await aib.wslToolCall({
+      distro: 'Ubuntu',
+      key: '',
+      conversation: 'f'.repeat(32),
+      body: '{}',
+      headers: {
+        [HOOK_KEY_HEADER]: key,
+        [CONVERSATION_HEADER]: 'f'.repeat(32),
+        [HOOK_NONCE_HEADER]: nonce,
+        [HOOK_EVENT_HEADER]: 'pre-tool',
+      },
+    });
     assertEquals(unknown.status, 401);
     // a closed AIB answers at once
     await aib.close();
     lab.aibs.splice(lab.aibs.indexOf(aib), 1);
-    const closed = await aib.wslToolCall({ distro: 'Ubuntu', key: '', conversation: c.id, body: '{}', headers: { [HOOK_KEY_HEADER]: key, [HOOK_EVENT_HEADER]: 'pre-tool' } });
+    const closed = await aib.wslToolCall({
+      distro: 'Ubuntu',
+      key: '',
+      conversation: c.id,
+      body: '{}',
+      headers: { [HOOK_KEY_HEADER]: key, [HOOK_EVENT_HEADER]: 'pre-tool' },
+    });
     assertEquals(closed.status, 503);
   },
 });
 
 Deno.test({
-  name: 'wsl subagent hooks: no hook support in the distro (old helper or setup fails) turns the chat\'s subagents off up front instead of leaving them unisolated',
+  name:
+    "wsl subagent hooks: no hook support in the distro (old helper or setup fails) turns the chat's subagents off up front instead of leaving them unisolated",
   ...T,
   async fn() {
     await keeperBinary();
@@ -374,7 +429,10 @@ Deno.test({
       assert(['Agent', 'Task', 'Workflow', 'EnterWorktree'].every((t) => deny.includes(t)), deny.join());
       assertEquals(c.claudeMeta(), { _meta: { claudeCode: { options: { settings: hooks.deny } } } });
       assert(!c.subagentIsolationOn());
-      assert(notes(c).some((n) => n.startsWith('Subagents are off in this chat: AIB could not set up their own worktree in this WSL distro')), notes(c).join('\n'));
+      assert(
+        notes(c).some((n) => n.startsWith('Subagents are off in this chat: AIB could not set up their own worktree in this WSL distro')),
+        notes(c).join('\n'),
+      );
     }
     // 2. the setup call fails: the same
     {
@@ -396,7 +454,8 @@ Deno.test({
       write(claude, 'settings.json', JSON.stringify({ disableAllHooks: true }));
       lab.host.loginEnv.CLAUDE_CONFIG_DIR = '/home/u/claude-config';
       const base = lab.helper['subagent.setup'];
-      lab.host.handlers['subagent.setup'] = async (p) => lab.out(await base({ ...(lab.into(p) as Json), env: { CLAUDE_CONFIG_DIR: claude } }));
+      lab.host.handlers['subagent.setup'] = async (p) =>
+        lab.out(await base({ ...(lab.into(p) as Json), env: { CLAUDE_CONFIG_DIR: claude } }));
       const aib = lab.aib();
       const c = await aib.connect('claude', REF);
       await idle(c);
@@ -414,19 +473,33 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    lab.host.handlers['agents.detect'] = () => ({ agents: [{ id: 'codex', found: true, command: ['node', '/usr/lib/node_modules/@zed-industries/codex-acp/bin/codex-acp.js'], version: '1.0.0' }] });
+    lab.host.handlers['agents.detect'] = () => ({
+      agents: [{
+        id: 'codex',
+        found: true,
+        command: ['node', '/usr/lib/node_modules/@zed-industries/codex-acp/bin/codex-acp.js'],
+        version: '1.0.0',
+      }],
+    });
     const { c, env, hook } = await openChat(lab, 'codex');
     assertEquals(c.subagentHooks!.off, '');
     assert(c.subagentHooks!.adopted === true);
     const sub = c.subagentHooks!.subFolder!;
     assert(/^\/home\/u\/aibdata\/worktrees\/[0-9a-f]+\/\.cx-[0-9a-f]{32}$/.test(sub), sub);
     assert(exists(lab.win(sub)), "the chat's own folder for its subagents exists in the distro");
-    const config = JSON.parse(env.CODEX_CONFIG) as { hooks: Record<string, { hooks: { command: string }[] }[]>; thread_unload_delay_secs: number };
+    const config = JSON.parse(env.CODEX_CONFIG) as {
+      hooks: Record<string, { hooks: { command: string }[] }[]>;
+      thread_unload_delay_secs: number;
+    };
     const pre = config.hooks.PreToolUse.at(-1)!.hooks[0].command;
     assertEquals(pre, `'${KEEPER}' hook codex-pre-tool --helper-socket '${SOCKET}' || exit 2`);
     assertEquals(env.AIB_HOOK_CHAT, c.id);
     // spawn_agent: the worktree is made in the distro; SubagentStart binds it and tells the subagent its folder
-    const spawn = await hook('codex-pre-tool', { tool_name: 'spawn_agent', tool_use_id: 'call_1', tool_input: { message: 'write the docs' } });
+    const spawn = await hook('codex-pre-tool', {
+      tool_name: 'spawn_agent',
+      tool_use_id: 'call_1',
+      tool_input: { message: 'write the docs' },
+    });
     assertEquals([spawn.status, spawn.proofOk, spawn.body], [200, true, '{}']);
     const rec = mirrors(lab)[0];
     assertEquals(rec.state, 'prepared');
@@ -437,9 +510,42 @@ Deno.test({
     // its shell commands run in the worktree (a cd prefix), and one naming the main folder is denied
     const bash = await hook('codex-pre-tool', { tool_name: 'Bash', agent_id: 'cx1', tool_input: { command: 'echo hi > a.txt' } });
     const fwd = (p: string) => p.replaceAll(SEP, '/');
-    assertEquals(JSON.parse(bash.body).hookSpecificOutput.updatedInput.command, `cd '${fwd(lab.win(rec.wsl!.linux.path))}'; echo hi > a.txt`);
-    const outside = await hook('codex-pre-tool', { tool_name: 'Bash', agent_id: 'cx1', tool_input: { command: `echo hi > ${fwd(lab.work)}/a.txt` } });
+    assertEquals(
+      JSON.parse(bash.body).hookSpecificOutput.updatedInput.command,
+      `cd '${fwd(lab.win(rec.wsl!.linux.path))}'; echo hi > a.txt`,
+    );
+    const outside = await hook('codex-pre-tool', {
+      tool_name: 'Bash',
+      agent_id: 'cx1',
+      tool_input: { command: `echo hi > ${fwd(lab.work)}/a.txt` },
+    });
     assertEquals(JSON.parse(outside.body).hookSpecificOutput.permissionDecision, 'deny');
+    // the project's aib-shared/ by its main-folder path passes (shared_fence.ts); `..` out of it and the rest of the folder do not
+    const sharedOk = await hook('codex-pre-tool', {
+      tool_name: 'Bash',
+      agent_id: 'cx1',
+      tool_input: { command: `echo hi > ${fwd(lab.work)}/aib-shared/r.md` },
+    });
+    assertEquals(JSON.parse(sharedOk.body).hookSpecificOutput.permissionDecision, 'allow');
+    const sharedUp = await hook('codex-pre-tool', {
+      tool_name: 'Bash',
+      agent_id: 'cx1',
+      tool_input: { command: `echo hi > ${fwd(lab.work)}/aib-shared/../a.txt` },
+    });
+    assertEquals(JSON.parse(sharedUp.body).hookSpecificOutput.permissionDecision, 'deny');
+    const patch = (file: string) => `*** Begin Patch\n*** Add File: ${file}\n+hi\n*** End Patch`;
+    const sharedPatch = await hook('codex-pre-tool', {
+      tool_name: 'apply_patch',
+      agent_id: 'cx1',
+      tool_input: { command: patch(`${lab.work}${SEP}aib-shared${SEP}r.md`) },
+    });
+    assertEquals(sharedPatch.body, '{}');
+    const mainPatch = await hook('codex-pre-tool', {
+      tool_name: 'apply_patch',
+      agent_id: 'cx1',
+      tool_input: { command: patch(`${lab.work}${SEP}tracked.txt`) },
+    });
+    assertEquals(JSON.parse(mainPatch.body).hookSpecificOutput.permissionDecision, 'deny');
     assertEquals((await hook('codex-subagent-stop', { agent_id: 'cx1' })).status, 200);
     assertEquals(mirrors(lab)[0].state, 'done');
     assertEquals(runGit(lab.work, 'status', '--porcelain').trim(), '');
@@ -447,20 +553,27 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'wsl subagent hooks: the envelope proof is the HTTP form\'s proof (the vector keeper/hooksocket_test.go and hookforward_test.go also check)',
+  name:
+    "wsl subagent hooks: the envelope proof is the HTTP form's proof (the vector keeper/hooksocket_test.go and hookforward_test.go also check)",
   ...T,
   fn() {
-    assertEquals(hookProof('k-123', 'abcdef0123456789', 200, new TextEncoder().encode('{}')), '8499c10f781827e1c0c1f5c0f017ff99d1d934efaab9c083690ce1cc5bafe6f3');
+    assertEquals(
+      hookProof('k-123', 'abcdef0123456789', 200, new TextEncoder().encode('{}')),
+      '8499c10f781827e1c0c1f5c0f017ff99d1d934efaab9c083690ce1cc5bafe6f3',
+    );
   },
 });
 
 Deno.test({
-  name: 'wsl subagent hooks: a helper that reports reaps gets hook 2 (pre-shell) and tags only a subagent\'s shell call; an older helper gets neither',
+  name:
+    "wsl subagent hooks: a helper that reports reaps gets hook 2 (pre-shell) and tags only a subagent's shell call; an older helper gets neither",
   ...T,
   async fn() {
     await keeperBinary();
     const commandsOf = (c: Connection) =>
-      Object.values((c.subagentHooks!.settings as { hooks: Record<string, { hooks: { command: string }[] }[]> }).hooks).flatMap((g) => g.flatMap((x) => x.hooks.map((h) => h.command)));
+      Object.values((c.subagentHooks!.settings as { hooks: Record<string, { hooks: { command: string }[] }[]> }).hooks).flatMap((g) =>
+        g.flatMap((x) => x.hooks.map((h) => h.command))
+      );
     { // older helper (no subagent.reaps): no pre-shell entry in the chat's hooks, its shell calls are never tagged
       await using lab = new Lab();
       const { c } = await openChat(lab);
@@ -494,11 +607,17 @@ Deno.test({
 });
 
 Deno.test({
-  name: "wsl subagent hooks: a WSL Codex chat on a helper that reports reaps is tagged (a subagent's Bash call only); an older helper leaves it untagged",
+  name:
+    "wsl subagent hooks: a WSL Codex chat on a helper that reports reaps is tagged (a subagent's Bash call only); an older helper leaves it untagged",
   ...T,
   async fn() {
     await keeperBinary();
-    const agents = [{ id: 'codex', found: true, command: ['node', '/usr/lib/node_modules/@zed-industries/codex-acp/bin/codex-acp.js'], version: '1.0.0' }];
+    const agents = [{
+      id: 'codex',
+      found: true,
+      command: ['node', '/usr/lib/node_modules/@zed-industries/codex-acp/bin/codex-acp.js'],
+      version: '1.0.0',
+    }];
     const bashOf = (hook: Awaited<ReturnType<typeof openChat>>['hook'], agent: string | null, command: string) =>
       hook('codex-pre-tool', { tool_name: 'Bash', ...(agent ? { agent_id: agent } : {}), tool_use_id: 'call_b', tool_input: { command } });
     { // older helper (no subagent.reaps): no tagging, the cd prefix alone
@@ -526,10 +645,18 @@ Deno.test({
   },
 });
 
-const QWEN_DETECT = { agents: [{ id: 'qwen', found: true, command: ['node', '/usr/lib/node_modules/@qwen-code/qwen-code/cli.js', '--acp', '--experimental-skills'], version: '0.27.2' }] };
+const QWEN_DETECT = {
+  agents: [{
+    id: 'qwen',
+    found: true,
+    command: ['node', '/usr/lib/node_modules/@qwen-code/qwen-code/cli.js', '--acp', '--experimental-skills'],
+    version: '0.27.2',
+  }],
+};
 
 Deno.test({
-  name: "wsl subagent hooks: a WSL Qwen chat gets AIB's system settings file in the distro (hooks on the helper socket) and its subagent works in a worktree there",
+  name:
+    "wsl subagent hooks: a WSL Qwen chat gets AIB's system settings file in the distro (hooks on the helper socket) and its subagent works in a worktree there",
   ...T,
   async fn() {
     await keeperBinary();
@@ -542,9 +669,18 @@ Deno.test({
     // the settings file is written in the distro by its helper, named by QWEN_CODE_SYSTEM_SETTINGS_PATH
     const file = env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
     assertEquals(file, `/home/u/aibdata/qwen/${c.id}/settings.json`);
-    const settings = JSON.parse(Deno.readTextFileSync(lab.win(file))) as { hooks: Record<string, { hooks: { command: string }[] }[]>; permissions: { deny: string[] } };
-    assertEquals(settings.hooks.PreToolUse.at(-1)!.hooks[0].command, `'${KEEPER}' hook qwen-pre-tool --helper-socket '${SOCKET}' || exit 2`);
-    assertEquals(settings.hooks.SubagentStop[0].hooks[0].command, `'${KEEPER}' hook qwen-subagent-stop --helper-socket '${SOCKET}' || exit 2`);
+    const settings = JSON.parse(Deno.readTextFileSync(lab.win(file))) as {
+      hooks: Record<string, { hooks: { command: string }[] }[]>;
+      permissions: { deny: string[] };
+    };
+    assertEquals(
+      settings.hooks.PreToolUse.at(-1)!.hooks[0].command,
+      `'${KEEPER}' hook qwen-pre-tool --helper-socket '${SOCKET}' || exit 2`,
+    );
+    assertEquals(
+      settings.hooks.SubagentStop[0].hooks[0].command,
+      `'${KEEPER}' hook qwen-subagent-stop --helper-socket '${SOCKET}' || exit 2`,
+    );
     assert(settings.permissions.deny.includes('Agent(claude-code)') && !settings.permissions.deny.includes('agent'));
     assertEquals(env.AIB_HOOK_CHAT, c.id);
     assertEquals(env.AIB_HOOK_READONLY, 'Explore');
@@ -564,20 +700,43 @@ Deno.test({
     assertEquals([start.status, start.proofOk], [200, true]);
     assert(JSON.parse(start.body).hookSpecificOutput.additionalContext.includes(lab.win(rec.wsl!.linux.path)), start.body);
     const wt = lab.win(rec.wsl!.linux.path);
-    const inside = await hook('qwen-pre-tool', { tool_name: 'write_file', agent_id: 'general-purpose-call_1', tool_input: { file_path: `${wt}${SEP}a.txt` } });
+    const inside = await hook('qwen-pre-tool', {
+      tool_name: 'write_file',
+      agent_id: 'general-purpose-call_1',
+      tool_input: { file_path: `${wt}${SEP}a.txt` },
+    });
     assertEquals([inside.status, inside.body], [200, '{}']);
-    const outside = await hook('qwen-pre-tool', { tool_name: 'write_file', agent_id: 'general-purpose-call_1', tool_input: { file_path: `${lab.work}${SEP}a.txt` } });
+    const outside = await hook('qwen-pre-tool', {
+      tool_name: 'write_file',
+      agent_id: 'general-purpose-call_1',
+      tool_input: { file_path: `${lab.work}${SEP}a.txt` },
+    });
     assertEquals(JSON.parse(outside.body).hookSpecificOutput.permissionDecision, 'deny');
-    const shell = await hook('qwen-pre-tool', { tool_name: 'run_shell_command', agent_id: 'general-purpose-call_1', tool_input: { command: `echo hi > ${fwd(lab.work)}/a.txt` } });
+    const shell = await hook('qwen-pre-tool', {
+      tool_name: 'run_shell_command',
+      agent_id: 'general-purpose-call_1',
+      tool_input: { command: `echo hi > ${fwd(lab.work)}/a.txt` },
+    });
     assertEquals(JSON.parse(shell.body).hookSpecificOutput.permissionDecision, 'deny');
     // Explore: no worktree, reads only
-    const explore = await hook('qwen-pre-tool', { tool_name: 'run_shell_command', agent_id: 'Explore-call_2', tool_input: { command: 'ls' } });
+    const explore = await hook('qwen-pre-tool', {
+      tool_name: 'run_shell_command',
+      agent_id: 'Explore-call_2',
+      tool_input: { command: 'ls' },
+    });
     assertEquals(JSON.parse(explore.body).hookSpecificOutput.permissionDecision, 'deny');
     assertEquals((await hook('qwen-pre-tool', { tool_name: 'read_file', agent_id: 'Explore-call_2', tool_input: {} })).body, '{}');
     // a fork is refused; a Codex event does not answer a Qwen chat
-    const fork = await hook('qwen-pre-tool', { tool_name: 'agent', tool_call_id: 'call_3', tool_input: { subagent_type: 'fork', prompt: 'x' } });
+    const fork = await hook('qwen-pre-tool', {
+      tool_name: 'agent',
+      tool_call_id: 'call_3',
+      tool_input: { subagent_type: 'fork', prompt: 'x' },
+    });
     assertEquals(JSON.parse(fork.body).hookSpecificOutput.permissionDecision, 'deny');
-    assertEquals((await hook('codex-pre-tool', { tool_name: 'spawn_agent', tool_use_id: 'call_4', tool_input: { message: 'x' } })).status, 503);
+    assertEquals(
+      (await hook('codex-pre-tool', { tool_name: 'spawn_agent', tool_use_id: 'call_4', tool_input: { message: 'x' } })).status,
+      503,
+    );
     assertEquals((await hook('qwen-subagent-stop', { agent_id: 'general-purpose-call_1' })).status, 200);
     assertEquals(mirrors(lab)[0].state, 'done');
     assertEquals(runGit(lab.work, 'status', '--porcelain').trim(), '');
@@ -585,7 +744,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "wsl subagent hooks: a WSL Qwen chat whose hooks can't be given turns its agent tool off (the file with `agent` denied); no setup at all says so",
+  name:
+    "wsl subagent hooks: a WSL Qwen chat whose hooks can't be given turns its agent tool off (the file with `agent` denied); no setup at all says so",
   ...T,
   async fn() {
     await keeperBinary();
@@ -601,10 +761,16 @@ Deno.test({
       assertEquals(c.subagentHooks!.off, 'hooks are off');
       assert(c.subagentHooks!.detail!.includes('disableAllHooks'), c.subagentHooks!.detail);
       assert(!c.subagentIsolationOn());
-      const settings = JSON.parse(Deno.readTextFileSync(lab.win(env.QWEN_CODE_SYSTEM_SETTINGS_PATH))) as { hooks?: unknown; permissions: { deny: string[] } };
+      const settings = JSON.parse(Deno.readTextFileSync(lab.win(env.QWEN_CODE_SYSTEM_SETTINGS_PATH))) as {
+        hooks?: unknown;
+        permissions: { deny: string[] };
+      };
       assert(settings.permissions.deny.includes('agent'));
       assertEquals(settings.hooks, undefined);
-      assert(notes(c).some((n) => n.startsWith('Subagents are off in this Qwen chat') && n.includes('disableAllHooks')), notes(c).join('\n'));
+      assert(
+        notes(c).some((n) => n.startsWith('Subagents are off in this Qwen chat') && n.includes('disableAllHooks')),
+        notes(c).join('\n'),
+      );
       assertEquals(env.AIB_HOOK_KEY, undefined, 'no key when no hook runs');
     }
     // 2. a helper without the hook tunnel, or one that cannot be asked: said up front (this build cannot deny the tool there)
@@ -629,13 +795,16 @@ Deno.test({
   },
 });
 
-const AGY_DETECT = { agents: [{ id: 'antigravity', found: true, command: ['/usr/local/bin/agy', 'acp', '--disable-telemetry'], version: '1.5.11' }] };
+const AGY_DETECT = {
+  agents: [{ id: 'antigravity', found: true, command: ['/usr/local/bin/agy', 'acp', '--disable-telemetry'], version: '1.5.11' }],
+};
 const withKey = async (aib: Aib): Promise<void> => {
   await aib.settings.update({ agents: { betaKey: { antigravity: 'AIza-dummy-not-a-real-key-000000000000' } } });
 };
 
 Deno.test({
-  name: "wsl subagent hooks: a WSL Antigravity chat with a key gets its own gemini folder in the distro (hooks on the helper socket); its subagent's worktree is adopted there and lands",
+  name:
+    "wsl subagent hooks: a WSL Antigravity chat with a key gets its own gemini folder in the distro (hooks on the helper socket); its subagent's worktree is adopted there and lands",
   ...T,
   async fn() {
     await keeperBinary();
@@ -669,7 +838,10 @@ Deno.test({
       toolCall: { id: 't1', name, args },
     });
     // the main agent starts a subagent: Workspace "branch", through the tunnel, signed
-    const pre = await hook('agy-pre-tool', tool('invoke_subagent', { TypeName: 'builder', Role: 'Builder Agent', Prompt: 'write the docs', Workspace: 'inherit' }));
+    const pre = await hook(
+      'agy-pre-tool',
+      tool('invoke_subagent', { TypeName: 'builder', Role: 'Builder Agent', Prompt: 'write the docs', Workspace: 'inherit' }),
+    );
     assertEquals([pre.tunnel, pre.status, pre.proofOk], [200, 200, true]);
     assertEquals(JSON.parse(pre.body), { decision: 'allow', overwrite: { Workspace: 'branch' } });
     for (const [name, args] of [['run_workflow', { Script: 'x' }], ['swarm', { action: 'add' }]] as const) {
@@ -702,7 +874,10 @@ Deno.test({
     commit(worktree, 'sub.txt', 'from the subagent\n', 'subagent edit');
     write(worktree, 'extra.txt', 'uncommitted in the worktree\n');
     assertEquals(runGit(lab.work, 'status', '--porcelain').trim(), '', 'the project folder has none of it');
-    assertEquals((await hook('agy-stop', { hookEventName: 'Stop', conversationId: sub, cwd: linux, terminationReason: 'NO_TOOL_CALL' })).status, 200);
+    assertEquals(
+      (await hook('agy-stop', { hookEventName: 'Stop', conversationId: sub, cwd: linux, terminationReason: 'NO_TOOL_CALL' })).status,
+      200,
+    );
     assertEquals(mirrors(lab)[0].state, 'done');
     write(lab.work, 'mine.txt', 'my own unsaved work\n');
     await lab.swarm.poll();
@@ -718,7 +893,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "wsl subagent hooks: a WSL Antigravity chat without a key, or whose hooks can't be given, is not isolated and says so (nothing is written)",
+  name:
+    "wsl subagent hooks: a WSL Antigravity chat without a key, or whose hooks can't be given, is not isolated and says so (nothing is written)",
   ...T,
   async fn() {
     await keeperBinary();
@@ -732,7 +908,10 @@ Deno.test({
       assert(!c.subagentIsolationOn());
       assertEquals(env.AIB_HOOK_KEY, undefined);
       assert(c.subagentRule.includes('Do not start subagents'));
-      assert(notes(c).some((n) => n.includes("can't be held in their own worktree") && n.includes('signed in with Google')), notes(c).join('\n'));
+      assert(
+        notes(c).some((n) => n.includes("can't be held in their own worktree") && n.includes('signed in with Google')),
+        notes(c).join('\n'),
+      );
       assert(!exists(lab.win('/home/u/aibdata/antigravity')), 'no gemini folder was made');
     }
     // 2. a helper without the hook tunnel, or one that cannot be asked: said up front

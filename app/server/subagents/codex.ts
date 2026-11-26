@@ -39,6 +39,7 @@ import { pathOf } from '../state/paths.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { deny, type HookAnswer, type SubagentChat, type SubagentWorktrees } from './service.ts';
 import { codexTagPrefix } from './shell_tag.ts';
+import { inSharedFolder, maskShared, sharedFolderOf } from './shared_fence.ts';
 
 type Json = Record<string, unknown>;
 
@@ -62,7 +63,13 @@ export const CODEX_EVENTS: readonly (readonly [string, string, string])[] = [
  * run), and Codex runs a call whose hook exits 2 anyway; the forwarder refuses with a JSON deny itself. Elsewhere `$SHELL -lc`:
  * both single-quoted, `|| exit 2` kept.
  */
-export function codexHookCommand(forwarder: string, addressFile: string, event: string, os: string = Deno.build.os, viaSocket = false): string | null {
+export function codexHookCommand(
+  forwarder: string,
+  addressFile: string,
+  event: string,
+  os: string = Deno.build.os,
+  viaSocket = false,
+): string | null {
   if (os === 'windows') {
     if (!/^[A-Za-z]:\\[^\s"'&|<>^%!(),;=`$@{}]+$/.test(forwarder) || /["%!$`\r\n]/.test(addressFile)) return null;
     return `${forwarder} hook ${event} "${addressFile}"`;
@@ -369,7 +376,9 @@ async function subagentCall(service: SubagentWorktrees, chat: SubagentChat, agen
   const input = isDict(body.tool_input) ? body.tool_input as Json : {};
   if (tool === 'Bash') {
     const command = typeof input.command === 'string' ? input.command : '';
-    if (namesFolder(command, [chat.folder, chat.project], rec.path)) return deny(CODEX_TEXTS.mainFolder(rec.path));
+    if (namesFolder(command, [chat.folder, chat.project], rec.path, [sharedFolderOf(chat.project)])) {
+      return deny(CODEX_TEXTS.mainFolder(rec.path));
+    }
     return json({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
@@ -381,7 +390,7 @@ async function subagentCall(service: SubagentWorktrees, chat: SubagentChat, agen
   }
   if (tool === 'apply_patch') {
     const patch = typeof input.command === 'string' ? input.command : '';
-    return patchInside(patch, rec.path) ? pass() : deny(CODEX_TEXTS.patch(rec.path));
+    return patchInside(patch, rec.path, sharedFolderOf(chat.project)) ? pass() : deny(CODEX_TEXTS.patch(rec.path));
   }
   if (tool.startsWith('mcp__')) {
     const ok = tool.startsWith('mcp__studio_artifact__') && !/merge_into_project|resolve_edit_clash/.test(tool);
@@ -400,9 +409,10 @@ function canon(text: string): string {
  * The command names one of `folders` (any slash form, Git Bash's /c/...), not counting the worktree's own path (which may sit
  * below one of them, e.g. under the user's home). A heuristic: the shell is not parsed (design 1.4).
  */
-export function namesFolder(command: string, folders: string[], worktree: string): boolean {
+export function namesFolder(command: string, folders: string[], worktree: string, shared: string[] = []): boolean {
   let text = canon(command);
   for (const own of [worktree, forward(worktree)]) text = text.split(canon(own)).join('\u0000');
+  text = maskShared(text, shared); // the project's aib-shared/ by its main-folder path is allowed (shared_fence.ts)
   for (const folder of folders.filter((f) => !!f)) {
     const f = canon(folder).replace(/\\+$/, '');
     const forms = [f];
@@ -421,7 +431,7 @@ export function namesFolder(command: string, folders: string[], worktree: string
 }
 
 /** Every file an apply_patch names is an absolute path inside `worktree` (no `..`). A patch naming no file passes. */
-export function patchInside(patch: string, worktree: string): boolean {
+export function patchInside(patch: string, worktree: string, shared = ''): boolean {
   const root = canon(worktree).replace(/\\+$/, '') + '\\';
   for (const line of patch.split('\n')) {
     const m = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\r?$/.exec(line);
@@ -431,7 +441,7 @@ export function patchInside(patch: string, worktree: string): boolean {
     }
     const path = m[1].trim();
     if (!/^([A-Za-z]:[\\/]|\/)/.test(path) || /(^|[\\/])\.\.?([\\/]|$)/.test(path)) return false;
-    if (!canon(path).startsWith(root)) return false;
+    if (!canon(path).startsWith(root) && !inSharedFolder(path, shared)) return false;
   }
   return true;
 }

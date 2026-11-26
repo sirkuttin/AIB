@@ -51,6 +51,7 @@ import { dirname, join } from '../platform/path.ts';
 import { pathOf } from '../state/paths.ts';
 import { deny, type HookAnswer, type SubagentChat, type SubagentWorktrees } from './service.ts';
 import { namesFolder } from './codex.ts';
+import { inSharedFolder, sharedFolderOf } from './shared_fence.ts';
 import { parseJsonc } from './gemini.ts';
 
 type Json = Record<string, unknown>;
@@ -386,15 +387,18 @@ async function subagentCall(service: SubagentWorktrees, chat: SubagentChat, agen
   const rec = service.runningAgent(chat.id, agentId) ?? await service.bindByCall(chat.id, agentId, str(body.agent_type));
   if (!rec) return READ_ONLY_TOOLS.has(tool) ? pass() : deny(QWEN_TEXTS.noWorktree);
   const field = WRITE_TOOLS[tool];
+  const shared = sharedFolderOf(chat.project); // the project's aib-shared/, allowed by its main-folder path too (shared_fence.ts)
   if (field) {
     const path = typeof input[field] === 'string' ? input[field] as string : '';
-    return insideWorktree(path, rec.path) ? pass() : deny(QWEN_TEXTS.write(rec.path, field));
+    return insideWorktree(path, rec.path) || inSharedFolder(path, shared) ? pass() : deny(QWEN_TEXTS.write(rec.path, field));
   }
   if (tool === 'run_shell_command') {
     const command = typeof input.command === 'string' ? input.command : '';
-    if (namesFolder(command, [chat.folder, chat.project], rec.path)) return deny(QWEN_TEXTS.shell(rec.path));
+    if (namesFolder(command, [chat.folder, chat.project], rec.path, [shared])) return deny(QWEN_TEXTS.shell(rec.path));
     const directory = typeof input.directory === 'string' ? input.directory : '';
-    if (directory && !insideWorktree(directory, rec.path, true)) return deny(QWEN_TEXTS.shell(rec.path));
+    if (directory && !insideWorktree(directory, rec.path, true) && !inSharedFolder(directory, shared, true)) {
+      return deny(QWEN_TEXTS.shell(rec.path));
+    }
     return pass();
   }
   if (tool.startsWith('mcp__')) {

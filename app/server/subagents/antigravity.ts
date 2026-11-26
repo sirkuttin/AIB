@@ -54,6 +54,7 @@ import { isDict } from '../core/py.ts';
 import { dirname, join } from '../platform/path.ts';
 import { denyAgy, type HookAnswer, MAX_PER_CHAT, type SubagentChat, type SubagentWorktrees, TEXTS as SERVICE_TEXTS } from './service.ts';
 import { namesFolder } from './codex.ts';
+import { inSharedFolder, sharedFolderOf } from './shared_fence.ts';
 import { parseJsonc } from './gemini.ts';
 
 type Json = Record<string, unknown>;
@@ -75,7 +76,16 @@ export const SPAWN_TOOLS = new Set(['invoke_subagent', 'define_subagent', 'run_w
 /** The tools that change a file, and the input field that holds the path. */
 export const WRITE_TOOLS: Record<string, string> = { write_file: 'Path', edit_file: 'Path' };
 /** Tools a subagent AIB has no worktree for may use: every one only reads or talks (an allowlist: an unknown or new tool is denied). */
-export const READ_ONLY_TOOLS = new Set(['read_file', 'search_web', 'ask_question', 'manage_task', 'update_steps', 'send_message', 'list_resources', 'read_resource']);
+export const READ_ONLY_TOOLS = new Set([
+  'read_file',
+  'search_web',
+  'ask_question',
+  'manage_task',
+  'update_steps',
+  'send_message',
+  'list_resources',
+  'read_resource',
+]);
 
 /** True for the Antigravity chats this rule applies to. */
 export const isAntigravity = (provider: string): boolean => provider === 'antigravity';
@@ -89,7 +99,10 @@ export function geminiDirOf(command: readonly string[]): string {
 }
 
 /** `join` for a path that may be the distro's (a WSL chat's gemini folder is a Linux path: slashes, whatever the host). */
-const joinAs = (base: string, ...parts: string[]): string => (base.startsWith('/') ? [base.replace(/\/+$/, ''), ...parts].join('/') : join(base, ...parts));
+const joinAs = (
+  base: string,
+  ...parts: string[]
+): string => (base.startsWith('/') ? [base.replace(/\/+$/, ''), ...parts].join('/') : join(base, ...parts));
 /** agy's folder for its subagent worktrees under a gemini dir. */
 export const worktreesRootOf = (geminiDir: string): string => joinAs(geminiDir, 'antigravity-cli', 'worktrees');
 
@@ -196,10 +209,11 @@ export const ANTIGRAVITY_ISOLATED_NOTE =
 /** The chat line when AIB can only ask: why, and the way to get it enforced. */
 export const antigravityAskedNote = (why: string): string =>
   `Antigravity's subagents can't be held in their own worktree in this chat: ${why}. AIB asks the agent not to start subagents that ` +
-  "edit files and to do that work itself; that is a request, not a guarantee. Check what a subagent changed in Changes.";
+  'edit files and to do that work itself; that is a request, not a guarantee. Check what a subagent changed in Changes.';
 
 /** Why the Google sign-in case is only asked for (said once, up front; names the way to enforced isolation). */
-export const SIGNIN_WHY = 'you are signed in with Google, and AIB can only switch its hooks on through a settings folder of its own, which it ' +
+export const SIGNIN_WHY =
+  'you are signed in with Google, and AIB can only switch its hooks on through a settings folder of its own, which it ' +
   'uses with an API key (Settings, Antigravity CLI), never your ~/.gemini or your project folder';
 
 // ---- the hook routes ----------------------------------------------------------------------------------------------------------
@@ -207,12 +221,15 @@ export const SIGNIN_WHY = 'you are signed in with Google, and AIB can only switc
 export const AGY_TEXTS = {
   workflow: "Workflows aren't available in AIB chats, because the agents they start can't get their own git worktree. Start subagents " +
     'with invoke_subagent instead; AIB gives each its own worktree.',
-  swarm: "Swarm workers aren't available in AIB chats, because they can't get their own git worktree. Start subagents with invoke_subagent " +
+  swarm:
+    "Swarm workers aren't available in AIB chats, because they can't get their own git worktree. Start subagents with invoke_subagent " +
     'instead; AIB gives each its own worktree.',
-  nested: "In AIB, a subagent can't start or manage other agents: they could not have their own worktree. Do the work in this subagent, or " +
+  nested:
+    "In AIB, a subagent can't start or manage other agents: they could not have their own worktree. Do the work in this subagent, or " +
     'ask the main agent for another one.',
   schedule: "Subagents can't schedule work in AIB: it could run later in the main folder. Ask the main agent to.",
-  noWorktree: 'AIB has no worktree for this subagent, so it may only read (read_file, search_web) and talk. It cannot run commands or change ' +
+  noWorktree:
+    'AIB has no worktree for this subagent, so it may only read (read_file, search_web) and talk. It cannot run commands or change ' +
     'files. Report what you found; the main agent can run commands and start an editing subagent.',
   write: (wt: string, tool: string) =>
     `This subagent works in its own git worktree, ${wt}. ${tool} needs an absolute Path inside it (e.g. ${join(wt, 'src', 'file.ts')}), ` +
@@ -372,12 +389,15 @@ async function subagentCall(service: SubagentWorktrees, chat: SubagentChat, root
   if (field) {
     const path = typeof args[field] === 'string' ? args[field] as string : '';
     // its worktree; or agy's own copy of a workspace the chat has besides the project (its cwd then: nothing there lands)
-    const ok = insideFolder(path, rec.path) || (rec.agy?.also ?? []).some((f) => insideFolder(path, f));
+    const ok = insideFolder(path, rec.path) || (rec.agy?.also ?? []).some((f) => insideFolder(path, f)) ||
+      inSharedFolder(path, sharedFolderOf(chat.project)); // or the project's aib-shared/ by its main-folder path (shared_fence.ts)
     return ok ? allow() : denyAgy(AGY_TEXTS.write(rec.path, name));
   }
   if (name === 'run_command') {
     const command = typeof args.CommandLine === 'string' ? args.CommandLine : '';
-    return namesFolder(command, [chat.folder, chat.project], rec.path) ? denyAgy(AGY_TEXTS.shell(rec.path)) : allow();
+    return namesFolder(command, [chat.folder, chat.project], rec.path, [sharedFolderOf(chat.project)])
+      ? denyAgy(AGY_TEXTS.shell(rec.path))
+      : allow();
   }
   if (name.startsWith('mcp_')) {
     const ok = name.startsWith('mcp_studio_artifact_') && !/merge_into_project|resolve_edit_clash/.test(name);
