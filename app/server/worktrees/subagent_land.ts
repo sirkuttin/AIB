@@ -9,6 +9,7 @@
  */
 import * as merge from './merge.ts';
 import * as wt from './worktrees.ts';
+import { SEED_FILE, SHARED_DIR } from './shared_link.ts';
 import { pyStr } from '../core/py.ts';
 import { pathOf } from '../state/paths.ts';
 import { canonicalName } from '../allow/paths.ts';
@@ -34,7 +35,7 @@ export async function ignoredFiles(path: string): Promise<string[]> {
     pyStr((await wt.git(['ls-files', '-z', '--others', '--ignored', '--exclude-standard', ...extra], path, { check: false })).stdout)
       .split('\0').filter((n) => n);
   const generated = (f: string) =>
-    f.replace(/\/$/, '').split('/').some((part) => GENERATED_DIRS.has(part)) || /\.py[co]$/.test(f) || throughLink(path, f);
+    f.replace(/\/$/, '').split('/').some((part) => GENERATED_DIRS.has(part)) || /\.py[co]$/.test(f) || throughLink(path, f) || inSharedCopy(path, f);
   const out: string[] = [];
   for (const entry of await list(['--directory'])) {
     if (out.length >= 200) break;
@@ -43,6 +44,22 @@ export async function ignoredFiles(path: string): Promise<string[]> {
     else for (const f of await list(['--', entry])) if (!generated(f) && out.length < 200) out.push(f);
   }
   return out;
+}
+
+/**
+ * True when `rel` lies in the worktree's own `aib-shared/` copy (a Claude builder's: shared_link.ts copySharedIn leaves a seed note
+ * in it). Those files go back into the main folder when the builder ends and before the worktree is removed, so they are no reason
+ * to keep it.
+ */
+function inSharedCopy(path: string, rel: string): boolean {
+  const parts = rel.replace(/\/$/, '').split('/').filter(Boolean);
+  const at = parts.indexOf(SHARED_DIR);
+  if (at < 0) return false;
+  try {
+    return Deno.lstatSync(pathOf(path, ...parts.slice(0, at + 1), SEED_FILE)).isFile;
+  } catch {
+    return false;
+  }
 }
 
 /** True when `rel` (worktree-relative, git's form) is a link or lies under one: the `aib-shared` link and what git lists through it. */

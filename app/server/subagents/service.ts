@@ -414,6 +414,10 @@ export class SubagentWorktrees {
       if (next && next.agentId && !next.wsl && (next.state === 'done' || next.state === 'stopped') && was !== 'done' && was !== 'stopped') {
         this.#reapLater(next.id);
       }
+      // a Claude builder that finished: what it wrote in its aib-shared/ copy goes into the main folder's (again before removal)
+      if (next && next.project && !next.wsl && (next.state === 'done' || next.state === 'stopped') && was !== next.state) {
+        return wt.copySharedBack(next.path, next.project).then(() => next);
+      }
       return next;
     });
   }
@@ -947,7 +951,7 @@ export class SubagentWorktrees {
     if (spare) {
       const moved = await wt.git(['reset', '-q', '--hard', s.commit], spare.path, { check: false });
       if (moved.returncode === 0) {
-        await wt.giveSharedLink(spare.path, chat.project); // an old worktree reused: its aib-shared link checked first
+        await this.#giveShared(spare.path, chat); // an old worktree reused: its aib-shared link (or copy) made again first
         const rec = await this.#patch(spare.id, { state: late() ? 'spare' : 'prepared', snapshot: s.commit, tree: s.tree, ...(late() ? {} : meta) });
         this.#spareSoon(chat, s.commit);
         return rec!;
@@ -978,12 +982,21 @@ export class SubagentWorktrees {
       // a running subagent's worktree is never removed by `git worktree remove` or prune (as Claude Code does with its own)
       await wt.git(['worktree', 'lock', '--reason', 'AIB subagent', place.path], chat.folder, { check: false });
       // the project's aib-shared/ is the main folder's one: a link to it, never a copy (shared_link.ts)
-      await wt.giveSharedLink(place.path, chat.project);
+      await this.#giveShared(place.path, chat);
     } catch (error) {
       await this.#remove(rec);
       return `git could not make it (${error instanceof Error ? error.message.slice(0, 300) : error})`;
     }
     return (await this.#patch(id, { state: meta ? 'prepared' : 'spare' }))!;
+  }
+
+  /**
+   * The worktree's aib-shared/: a link to the main folder's for every provider but Claude Code, whose worktree isolation refuses
+   * writes through that link before any hook runs; its builders get a real copy that goes back when they end (shared_link.ts).
+   */
+  async #giveShared(path: string, chat: SubagentChat): Promise<void> {
+    if (isClaudeFamily(chat.provider)) await wt.giveSharedCopy(path, chat.project);
+    else await wt.giveSharedLink(path, chat.project);
   }
 
   /** The prepared-worktree fast path: one spare per chat, made in the background from the latest S. */

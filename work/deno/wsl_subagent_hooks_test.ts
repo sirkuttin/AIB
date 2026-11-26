@@ -29,6 +29,7 @@ import { hookProof } from '../../app/server/artifacts/keys.ts';
 import { setWslHostResolver } from '../../app/server/wsl/access.ts';
 import { WslHelperError } from '../../app/server/wsl/contract.ts';
 import { subagentMethods } from '../../app/server/wsl/helper/subagents.ts';
+import { ensureDefault } from '../../app/server/worktrees/local_only.ts';
 import { Swarm } from '../../app/server/swarm/service.ts';
 import { readSubagents } from '../../app/server/subagents/service.ts';
 
@@ -265,6 +266,34 @@ Deno.test({
     assertEquals(runGit(lab.work, 'branch', '--list', 'studio/sub-*').trim().split('\n').filter((l) => l.includes(String(rec.branch))), []);
     assertEquals(runGit(lab.work, 'stash', 'list').trim(), '', 'nothing was stashed');
     void aib;
+  },
+});
+
+Deno.test({
+  name: 'wsl subagent hooks: a WSL Claude builder writes aib-shared/ in its own copy, and it goes into the project folder when the builder ends',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab();
+    await ensureDefault(lab.work); // the project keeps /aib-shared out of git (the default local-only entry)
+    write(lab.work, 'aib-shared/seed.txt', 'seed\n');
+    const { hook } = await openChat(lab);
+    assertEquals((await hook('pre-tool', agentCall('toolu_1'))).status, 200);
+    assertEquals((await hook('worktree-create', { name: 'agent-s1' })).status, 200);
+    const rec = mirrors(lab)[0];
+    const worktree = lab.win(rec.wsl!.linux.path);
+    const mine = worktree + SEP + 'aib-shared';
+    // Claude Code refuses writes through a link to the project folder, so the worktree has a real folder holding a copy
+    assert(!Deno.lstatSync(mine).isSymlink, 'a real folder, not a link');
+    assertEquals(read(mine, 'seed.txt'), 'seed\n');
+    write(mine, 'design/report.md', 'the report\n');
+    write(worktree, 'sub.txt', 'work\n');
+    assert(!exists(lab.work + SEP + 'aib-shared' + SEP + 'design'), 'copied back only when the builder ends');
+    assertEquals((await hook('post-agent', { tool_use_id: 'toolu_1', tool_response: { agentId: 's1', status: 'completed' } })).status, 200);
+    assertEquals(read(lab.work + SEP + 'aib-shared', 'design/report.md'), 'the report\n');
+    assertEquals(read(lab.work + SEP + 'aib-shared', 'seed.txt'), 'seed\n');
+    assert(!exists(lab.work + SEP + 'aib-shared' + SEP + '.aib-seed.json'));
+    assertEquals(runGit(lab.work, 'status', '--porcelain').trim(), '', 'nothing of it shows in git');
   },
 });
 
