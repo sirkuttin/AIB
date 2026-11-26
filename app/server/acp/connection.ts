@@ -47,6 +47,8 @@ import {
   ENCODER,
   now,
   within,
+  agentResult,
+  changeKey,
 } from './conn_util.ts';
 import { ThreadEvent, PyTextLines } from './thread_text.ts';
 import {
@@ -65,7 +67,7 @@ import {
   type WslSpawn,
   NoWrites,
 } from './conn_types.ts';
-import { type CheckpointStep } from './conn_limits.ts';
+import { type CheckpointStep, SCHEDULE_LATE_MS } from './conn_limits.ts';
 import { isFixture, guardRealAgent, testHomeEnv, guardRealAgentAuth, resolveProgram } from './launch_env.ts';
 import {
   ARTIFACT_PROMPT,
@@ -872,18 +874,7 @@ export class Connection {
   }
 
   static $result(result: Json): unknown {
-    if (Object.hasOwn(result, 'error')) {
-      const error = result.error;
-      const failure = new RuntimeError(
-        pyStr(
-          isDict(error) && Object.hasOwn(error, 'message') ? error.message : error,
-        ),
-      );
-      // The agent's code and data ride along (Qwen's subscriptionQuota, a -32601 for an unknown request); the message is unchanged.
-      if (isDict(error)) Object.assign(failure, { code: error.code ?? null, data: error.data ?? null });
-      throw failure;
-    }
-    return Object.hasOwn(result, 'result') ? result.result : {};
+    return agentResult(result);
   }
 
   // ---- open elsewhere (ownership/handoff.ts) ---------------------------------------------------------------------------------
@@ -918,7 +909,7 @@ export class Connection {
 
   // ---- settings changes: applied now between turns, queued during a turn -----------------------
   static changeKey(kind: string, configId: unknown = null): string {
-    return kind === 'mode' ? 'mode' : `config:${pyStr(configId)}`;
+    return changeKey(kind, configId);
   }
 
   /** A model-server chat (set by AIB): the server's models, and the model a new chat starts with. null for every other chat. */
@@ -947,7 +938,7 @@ export class Connection {
   $scheduleTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** A time this late or later (ms after the scheduled time) counts as "sent late": AIB was not running at the time. */
-  static readonly SCHEDULE_LATE_MS = 90_000;
+  static readonly SCHEDULE_LATE_MS = SCHEDULE_LATE_MS;
 
   /** Send the first waiting message if nothing stops it: idle, no hold, no edit lease on it, nobody waiting on the user. */
   $restartAsked = false;

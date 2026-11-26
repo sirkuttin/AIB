@@ -15,6 +15,8 @@ export const CLOSED_GRACE_SECONDS = 10 * 60; // a closed connection stays listed
 export const MAX_CLOSED_CONNECTIONS = 20; // ...and never more than this many closed ones are kept (oldest go first)
 export const STOPPED_HELPER_DAYS = 7; // a stopped or failed helper's copy goes this long after it stopped (nothing unmerged; build plan 1b 5.3)
 export const RECONNECT_TRIES = 3;
+/** Chats the schedule scan could not reopen are not tried again for this long. */
+export const SCAN_RETRY_MS = 5 * 60_000;
 /** The longest a page's request for a chat waits while chats are taken over from the keeper (chat.js GET_TIMEOUT_MS is longer). */
 export const ADOPT_WAIT_MS = 20_000;
 

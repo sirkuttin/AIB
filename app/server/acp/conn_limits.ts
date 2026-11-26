@@ -53,3 +53,6 @@ export const EVENT_CHUNK_BYTES = 4 * 1024 * 1024;
 /** Why a keeper-run agent ended without being asked to: the keeper itself went away. */
 export const KEEPER_LOST =
   'Interrupted: the keeper (the AIB process that holds running agents) stopped, so this agent stopped with it. Nothing was sent again.';
+
+/** A time this late or later (ms after the scheduled time) counts as "sent late": AIB was not running at the time. */
+export const SCHEDULE_LATE_MS = 90_000;

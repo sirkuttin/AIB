@@ -7,6 +7,8 @@
 export function installMethods(target: { prototype: any }, ...groups: Record<string, unknown>[]): void {
   for (const group of groups) {
     for (const name of Object.keys(group)) {
+      // A class-body method, or a method of an earlier group, with this name would be overwritten without a trace.
+      if (Object.hasOwn(target.prototype, name)) throw new Error(`installMethods: '${name}' already exists on the prototype (a class method or an earlier group)`);
       Object.defineProperty(target.prototype, name, { value: group[name], writable: true, configurable: true, enumerable: false });
     }
   }

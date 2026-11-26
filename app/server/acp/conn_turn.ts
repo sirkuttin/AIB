@@ -27,10 +27,10 @@ import { APP_VERSION } from '../core/app.ts';
 import { HeldElsewhere } from '../ownership/claude_sessions.ts';
 import { claudeConfigDir, isForkSkill, typedForkSkillText } from '../subagents/claude_config.ts';
 import { clip, isDict, isStr, pyLen, pyStrip, pyTruthy, pyTypeName, ValueError } from '../core/py.ts';
-import { log, type Json, errorName, errorText, get, pyEq, sortedCompactJson, now } from './conn_util.ts';
+import { log, type Json, errorName, errorText, get, pyEq, sortedCompactJson, now, changeKey } from './conn_util.ts';
 import { type Pending, type PendingChange } from './conn_types.ts';
 import { HELD, PROMPT_UNKNOWN, asRpcError, isAgentBusyError, busyRetry } from './conn_steer.ts';
-import { Connection } from './connection.ts';
+import type { Connection } from './connection.ts';
 
 export const turnMethods = {
   async $probeSettings(this: Connection, timeoutSeconds: number): Promise<Json> {
@@ -624,7 +624,7 @@ export const turnMethods = {
     }
     if (kind === 'mode') checkMode(this.settings, value);
     else buildConfigRequest(this.settings, configId, value);
-    const key = Connection.changeKey(kind, configId);
+    const key = changeKey(kind, configId);
     if (this.busy) {
       this.pendingChanges.delete(key);
       if (!pyEq(currentValue(this.settings, kind, configId), value)) {

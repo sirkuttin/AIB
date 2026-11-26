@@ -7,9 +7,9 @@ import * as agentRegistry from '../agents/agent_registry.ts';
 import { isStr, ValueError } from '../core/py.ts';
 import { OwnershipConflict } from '../ownership/ownership.ts';
 import { Mutex } from '../worktrees/sync.ts';
-import { log, type Json, RECONNECT_TRIES } from './aib_util.ts';
+import { log, type Json, RECONNECT_TRIES, SCAN_RETRY_MS } from './aib_util.ts';
 import { pairKey } from './aib_options.ts';
-import { Aib } from './aib.ts';
+import type { Aib } from './aib.ts';
 
 export const reconnectMethods = {
   // ---- automatic reconnect after a restart -------------------------------------------------------------------------------
@@ -70,7 +70,7 @@ export const reconnectMethods = {
         const key = pairKey(chat.provider, chat.sessionId);
         if (open.has(key) || this.reconnectPending.has(key) || chat.at > now) continue; // an open chat sends its own
         const failedAt = this.$scanFailed.get(key);
-        if (failedAt !== undefined && now - failedAt < Aib.SCAN_RETRY_MS) continue;
+        if (failedAt !== undefined && now - failedAt < SCAN_RETRY_MS) continue;
         try {
           await this.connect(chat.provider, chat.cwd, chat.sessionId, { background: false, continueAnyway: false, auto: true });
           this.$scanFailed.delete(key);

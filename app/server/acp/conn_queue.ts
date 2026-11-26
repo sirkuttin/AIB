@@ -8,7 +8,8 @@ import { clip, isDict, isStr, pyTruthy, ValueError } from '../core/py.ts';
 import { log, scheduleStamp, type Json, errorText } from './conn_util.ts';
 import { type Receipt } from './conn_types.ts';
 import { PROMPT_UNKNOWN } from './conn_steer.ts';
-import { Connection } from './connection.ts';
+import type { Connection } from './connection.ts';
+import { SCHEDULE_LATE_MS } from './conn_limits.ts';
 
 export const queueMethods = {
   // ---- queued messages: written while the agent works, sent one per turn when it ends ---------------------
@@ -234,7 +235,7 @@ export const queueMethods = {
     for (const item of due) {
       if (q.items.length >= MAX_ITEMS) break; // the queue is full: it stays scheduled and goes when there is room
       const queued = q.add(item.id, item.text, item.attachments, item.fingerprint);
-      if (now - item.at > Connection.SCHEDULE_LATE_MS) queued.late = item.at;
+      if (now - item.at > SCHEDULE_LATE_MS) queued.late = item.at;
       q.scheduled.splice(q.scheduled.indexOf(item), 1);
     }
     this.$queueChanged();

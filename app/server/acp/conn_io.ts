@@ -20,10 +20,11 @@ import {
   ENCODER,
   RSTRIP,
   now,
+  agentResult,
 } from './conn_util.ts';
 import { ThreadEvent, PyTextLines } from './thread_text.ts';
 import { type Pending } from './conn_types.ts';
-import { Connection } from './connection.ts';
+import type { Connection } from './connection.ts';
 
 export const ioMethods = {
   /** One JSON-RPC message to the agent. Writes go out in call order; throws when the agent's stdin is known to be gone. */
@@ -89,7 +90,7 @@ export const ioMethods = {
           `${method} did not respond within ${timeout} seconds`,
         );
       }
-      return Connection.$result(entry.response!);
+      return agentResult(entry.response!);
     } finally {
       this.pending.delete(key);
     }
@@ -99,7 +100,7 @@ export const ioMethods = {
   async $awaitReplayed(this: Connection, entry: Pending, id: unknown): Promise<unknown> {
     try {
       await entry.done.wait();
-      return Connection.$result(entry.response!);
+      return agentResult(entry.response!);
     } finally {
       if (this.pending.get(id) === entry) this.pending.delete(id);
     }

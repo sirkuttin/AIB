@@ -85,7 +85,7 @@ import { wslCreate, wslDiscard, WslPlan } from '../wsl/worktrees.ts';
 import { configureWslHosts, wslHostsInUse } from '../wsl/hosts.ts';
 import { WslSync, wslSyncChat } from '../wsl/sync.ts';
 import { AllowGate } from '../allow/gate.ts';
-import { log, type Json, RECONNECT_TRIES } from './aib_util.ts';
+import { log, type Json, RECONNECT_TRIES, SCAN_RETRY_MS } from './aib_util.ts';
 import {
   type AibOptions,
   type ConnectionFactory,
@@ -556,7 +556,7 @@ export class Aib {
   $scanning = false;
   /** Chats the scan could not reopen: not tried again for a while (their cards stay, with a plain error line). */
   readonly $scanFailed = new Map<string, number>();
-  static readonly SCAN_RETRY_MS = 5 * 60_000;
+  static readonly SCAN_RETRY_MS = SCAN_RETRY_MS;
 
   /** Chats the automatic reconnect gave up on in this process, with the last reason (until they run again or are forgotten). */
   readonly reconnectFailures = new Map<string, { provider: string; sessionId: string; cwd: string; error: string; at: number }>();

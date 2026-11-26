@@ -8,6 +8,7 @@ import {
   isDict,
   PY_SPACE,
   pyCompare,
+  pyStr,
   pyTypeName,
 } from '../core/py.ts';
 
@@ -159,4 +160,25 @@ export async function within<T>(task: Promise<T>, ms: number): Promise<T | false
   } finally {
     timer.cancel();
   }
+}
+
+/** Unwraps an agent's JSON-RPC response: its result, or throws its error (was Connection.$result). */
+export function agentResult(result: Json): unknown {
+  if (Object.hasOwn(result, 'error')) {
+    const error = result.error;
+    const failure = new RuntimeError(
+      pyStr(
+        isDict(error) && Object.hasOwn(error, 'message') ? error.message : error,
+      ),
+    );
+    // The agent's code and data ride along (Qwen's subscriptionQuota, a -32601 for an unknown request); the message is unchanged.
+    if (isDict(error)) Object.assign(failure, { code: error.code ?? null, data: error.data ?? null });
+    throw failure;
+  }
+  return Object.hasOwn(result, 'result') ? result.result : {};
+}
+
+/** The key of a queued settings change (was Connection.changeKey). */
+export function changeKey(kind: string, configId: unknown = null): string {
+  return kind === 'mode' ? 'mode' : `config:${pyStr(configId)}`;
 }
