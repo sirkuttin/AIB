@@ -103,6 +103,23 @@ Deno.test("inbox facts: Claude Code's helpers keep the chat working, then the fo
   assertEquals(other.attention().phase, 'idle', 'its turn ended: not held working by helpers AIB does not count');
 });
 
+Deno.test('inbox facts: after the turn ends with every subagent finished, the row says nothing is running (no over-count)', async () => {
+  await using lab = new Lab();
+  const c = await lab.open(['--held-turn']);
+  const gate = lab.path('gate-overcount');
+  await c.prompt(`helper:${gate}`, 'm1');
+  await until(() => !c.busy && turnEnds(c) === 1 && c.attention().helpers === 1, 'the reply ended while the subagent runs', LONG);
+  assertEquals(INBOX.helpersLine(c.attention().helpers as number), '1 subagent running');
+  Deno.writeTextFileSync(gate, 'go'); // the subagent finishes during the turn
+  await until(() => c.attention().helpers === 0, 'the subagent finished', LONG);
+  Deno.writeTextFileSync(gate + '.end', 'go'); // then the turn ends
+  await until(() => !c.busy && turnEnds(c) === 2, 'the turn ended', LONG);
+  const a = c.attention();
+  assertEquals(a.helpers, 0);
+  assertEquals(INBOX.helpersLine(a.helpers as number), '', 'no "1 subagent running" once the turn ended with none left');
+  assertEquals(a.phase, 'idle');
+});
+
 Deno.test('inbox facts: the agent host counts the chats blocked on you like the badge does (failed + asks; not a finished one)', async () => {
   await using lab = new Lab();
   const host = new AgentHost({ stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });

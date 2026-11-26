@@ -157,6 +157,7 @@ Deno.test({
       const hIdle = await lab.chat(), hBusy = await lab.chat();
       for (const h of [hIdle, hBusy]) {
         await h.start();
+        h.step({ u: { sessionUpdate: 'tool_call', toolCallId: 'helper-step-1', title: 'Helper read step', kind: 'read', status: 'completed' } });
         h.say('HELPEREND');
         h.end();
       }
@@ -218,6 +219,7 @@ Deno.test({
       await page.waitFor(`document.getElementById('submessages').textContent.includes('HELPEREND')`, 10000, "the helper's own messages show").catch(async (e) => {
         throw new Error(`${e.message}: ${await page.eval<string>(`document.getElementById('submessages').textContent`)}`);
       });
+      await page.waitFor(`document.getElementById('submessages').textContent.includes('Helper read step')`, 10000, "the helper's steps (tool rows) show in its history");
       await settle(1500);
       assertEquals(await banner(), '', 'no error banner after opening a merged helper');
       // a forced failure of that read shows inside the panel, not as the page banner, and clears when the read works again
