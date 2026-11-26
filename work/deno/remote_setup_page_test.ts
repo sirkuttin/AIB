@@ -21,6 +21,9 @@ const FAKE_SHELL = new URL("./_fake_setup_shell.ts", import.meta.url).pathname
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** The re-check cadence test runs the page's re-check 3 times faster (window.__aibTestDevicesScale, devices-ui.js; the server's 2.5 s
+ * Tailscale read cache is shortened the same: AccessOptions.readCacheMs), so its 7 s windows are 7/3 s. The ratios are the same. */
+const FAST = 3;
 
 async function openRemote(
   page: Page,
@@ -178,6 +181,7 @@ Deno.test({
       runner: sim.runner,
       setupEnv: sim.env(),
       bindRetryMs: 300,
+      readCacheMs: 2500 / FAST,
     });
     const browser = await Browser.launch();
     try {
@@ -188,6 +192,9 @@ Deno.test({
         action: "open-https",
       }); // step 2 now waits (no job runs)
       const page = await browser.open("about:blank", 1280, 900);
+      await page.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `window.__aibTestDevicesScale = ${FAST};`,
+      });
       await openRemote(page, s);
       await page.waitFor(
         `${stepState(2)}.includes('wait')`,
@@ -196,9 +203,9 @@ Deno.test({
       );
       const statusReads = () =>
         sim.reads.filter((r) => r[0] === "status").length;
-      await sleep(1000);
+      await sleep(1000 / FAST);
       let before = statusReads();
-      await sleep(7000);
+      await sleep(7000 / FAST);
       const waiting = statusReads() - before;
       assert(
         waiting >= 2 && waiting <= 3,
@@ -209,7 +216,7 @@ Deno.test({
         `[...document.querySelectorAll('.st-section')].find((b) => b.textContent === 'Editors').click()`,
       );
       before = statusReads();
-      await sleep(7000);
+      await sleep(7000 / FAST);
       assertEquals(statusReads() - before, 0, "another section shown");
       // closed
       await page.key("Escape");
@@ -219,9 +226,9 @@ Deno.test({
         "closed",
       );
       before = statusReads();
-      await sleep(7000);
+      await sleep(7000 / FAST);
       assertEquals(statusReads() - before, 0, "Settings closed");
-      // nothing waits: 30 s, so none in 7 s
+      // nothing waits: 30 s (10 s here), so none in 7 s (2.3 s here)
       sim.sim.https = true;
       await openRemote(page, s);
       await page.waitFor(
@@ -229,9 +236,9 @@ Deno.test({
         10000,
         "HTTPS green",
       );
-      await sleep(1000);
+      await sleep(1000 / FAST);
       before = statusReads();
-      await sleep(7000);
+      await sleep(7000 / FAST);
       assertEquals(statusReads() - before, 0, "nothing waits: every 30 s");
       await page.close();
     } finally {

@@ -66,6 +66,8 @@ export interface AccessProblem {
 export interface AccessOptions {
   runner?: Runner;
   bindRetryMs?: number;
+  /** Tests only: how long a Tailscale read serves the page's re-check (default 2.5 s); a test that runs the page's re-check faster shortens it. */
+  readCacheMs?: number;
   isFree?: (port: number) => boolean;
   /** Ports AIB itself uses (the page and artifact ports): never chosen as the phone port. */
   avoid?: () => number[];
@@ -189,7 +191,7 @@ export class PhoneAccess implements SetupHost {
   }
   /** Read Tailscale unless a read finished less than 2.5 s ago (the page and a waiting job poll every 3 s; one read serves both). */
   readCached(): Promise<TailscaleState> {
-    return this.#read(2500);
+    return this.#read(this.options.readCacheMs ?? 2500);
   }
   #read(maxAgeMs: number): Promise<TailscaleState> {
     if (this.#reading) return this.#reading;

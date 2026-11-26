@@ -18,6 +18,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown, sleep } from './_scroll_lab.ts';
+Lab.pollScale = 1; // this file's checks depend on the app's real poll periods
 
 function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
   Deno.test({

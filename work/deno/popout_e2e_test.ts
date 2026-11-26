@@ -77,7 +77,9 @@ async function lab() {
   const browser = await Browser.launch();
   const base = `http://127.0.0.1:${s.port}`;
   const popUrl = (w: string, key = K1) => base + windowPath({ w, kind: 'chat', chat: key, project: pk });
-  const open = async (url: string, width = 1400, height = 900) => {
+  /** scale: how many times faster the page polls (Browser.pollScale); the poll-cadence test opens its pages at 1. */
+  const open = async (url: string, width = 1400, height = 900, scale?: number) => {
+    if (scale) browser.pollScale = scale;
     const page = await browser.open('about:blank', width, height);
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: APP_PAGE });
     await page.goto(url);
@@ -373,7 +375,7 @@ Deno.test({
   async fn() {
     const t = await lab();
     try {
-      const a = await t.open(`${t.base}/?w=m`);
+      const a = await t.open(`${t.base}/?w=m`, 1400, 900, 1); // the real poll periods: this test counts them
       await a.waitFor(`!!document.querySelector('button.connection[data-key="${K1}"]')`, 20000, 'the chat in the list');
       await a.click(`button.connection[data-key="${K1}"]`);
       await a.waitFor(`window.AgentWorkspaceUI.openKeys()[0] === ${JSON.stringify(K1)}`, 10000, 'chat 1 open');

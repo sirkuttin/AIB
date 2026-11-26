@@ -98,6 +98,11 @@ function sharedBrowser(): Promise<Browser> {
 }
 
 export class Lab {
+  /**
+   * How many times faster the pages of every Lab poll (Browser.pollScale: window.__aibTestPollScale). A test file whose checks depend on
+   * the app's real poll periods (scroll, layout and soak files, the right panel) sets `Lab.pollScale = 1` at its top.
+   */
+  static pollScale = Math.max(1, Number(Deno.env.get("AIB_PAGE_POLL_SCALE") ?? 5) || 1);
   fx = new ScrollFixture();
   #ownBrowser = false;
   web!: Web;
@@ -106,12 +111,13 @@ export class Lab {
   #scripts = 0;
 
   /** env: extra for the web server (AIB_TEST_COPY_CHATS=1 lets chat(..., {ownCopy: true}) make a chat in its own copy). */
-  static async open(width = 1600, height = 900, env?: Record<string, string>, opts: { fastPoll?: boolean; fastList?: boolean } = {}): Promise<Lab> {
+  static async open(width = 1600, height = 900, env?: Record<string, string>, opts: { fastPoll?: boolean; fastList?: boolean; pollScale?: number } = {}): Promise<Lab> {
     const lab = new Lab();
     try {
       lab.web = await lab.fx.startWeb(['--in-process', '--no-auto-reconnect', '--no-owner-announcements'], env ? { env } : {});
       lab.#ownBrowser = FRESH;
       lab.browser = FRESH ? await Browser.launch() : await sharedBrowser();
+      lab.browser.pollScale = opts.pollScale ?? (opts.fastPoll === false ? 1 : Lab.pollScale); // fastPoll: false = a test that counts against the real periods
       lab.page = await lab.browser.open('about:blank', width, height);
       await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: OWNER_GUARD });
       await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: CALM_SCRIPT });

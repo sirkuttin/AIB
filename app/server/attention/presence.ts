@@ -51,6 +51,11 @@ export const STALE_MS = 45_000;
 export const ACTIVE_MS = 120_000;
 /** A phone that has not polled for this long is not looking (it polls every 3-4 s while visible). */
 export const PHONE_TTL_MS = 15_000;
+/** Tests of whole AIBs (AGENT_STUDIO_TEST=1) may shorten the TTL: AIB_TEST_PHONE_TTL_MS (a test phone that polls every second needs > 2 s). */
+const phoneTtlMs = (): number => {
+  const test = Deno.env.get("AGENT_STUDIO_TEST") === "1" ? Number(Deno.env.get("AIB_TEST_PHONE_TTL_MS")) : NaN;
+  return test > 0 ? test : PHONE_TTL_MS;
+};
 /** At most this many held-back alerts kept per phone (the oldest go). */
 const MAX_RECORD = 200;
 const MAX_PHONES = 50;
@@ -503,7 +508,7 @@ export class Presence {
   /** Phones that stopped polling end ("expired"). The watcher calls this on every look; the reads above call it too. */
   sweep(): void {
     const now = this.clock();
-    for (const [device, p] of [...this.#phones]) if (now - p.at >= PHONE_TTL_MS) this.#end(device, 'expired');
+    for (const [device, p] of [...this.#phones]) if (now - p.at >= phoneTtlMs()) this.#end(device, 'expired');
   }
 
   /** fn is called for every phone that stops showing AIB. Returns the unsubscribe. */

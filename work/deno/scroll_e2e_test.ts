@@ -40,6 +40,7 @@ import {
   wheel,
   whereIs,
 } from './_scroll_lab.ts';
+Lab.pollScale = 1; // this file's checks depend on the app's real poll periods
 
 const ALL = Deno.env.get('AIB_SCROLL_ALL') === '1';
 const PENDING_ON = Deno.env.get('AIB_SCROLL_PENDING') === '1';

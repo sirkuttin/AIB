@@ -10,6 +10,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, type Page, settle, shown } from './_scroll_lab.ts';
+Lab.pollScale = 1; // this file's checks depend on the app's real poll periods
 
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 const OPTIONS = { ignore: !browserPath, sanitizeResources: false, sanitizeOps: false };

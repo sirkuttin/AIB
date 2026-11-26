@@ -18,7 +18,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown } from './_scroll_lab.ts';
 
-function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
+function panelTest(name: string, fn: (lab: Lab) => Promise<void>, pollScale?: number) {
   Deno.test({
     name,
     ignore: !browserPath,
@@ -239,7 +239,7 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
   await page.click('.ar-pop .ar-it[data-id="art-b1"]');
   await page.waitFor(`/RSS feed plan/.test(document.querySelector('#artifactsPane .ar-pick')?.textContent || '')`, 10000, 'B shown');
   assertEquals(await page.eval<number>(`document.querySelectorAll('.ar-split, .ar-spick').length`), 0, 'one renderer, no per-pane dropdowns');
-});
+}, 1); // "the panel does not change": a poll landing in the window is a flake at 5x, so this test keeps the real periods
 
 panelTest('split panel: the Docs tab lists the project\'s docs whichever chat is focused; the Artifacts picker has no docs group', async (lab) => {
   const page = lab.page;

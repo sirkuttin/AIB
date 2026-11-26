@@ -18,8 +18,13 @@
     return n;
   };
   const POLL_MS = 2000;
-  const FAST_MS = 3000,
-    SLOW_MS = 30000,
+  // Tests only: a page that sets window.__aibTestDevicesScale (a number > 1) before this script runs ticks and re-checks that many
+  // times faster (the 1 s tick, the 3 s and 30 s re-check periods; the 10 minute switch to the slow one is unchanged). Nothing sets
+  // it in the app. Its own name, not __aibTestPollScale: a test that counts these cadences scales them on its own.
+  const SCALE = Math.max(1, Number(root.__aibTestDevicesScale) || 1);
+  const TICK_MS = 1000 / SCALE;
+  const FAST_MS = 3000 / SCALE,
+    SLOW_MS = 30000 / SCALE,
     FAST_FOR_MS = 10 * 60 * 1000;
 
   // The switches on the approve dialog and each phone's row: [scope, label]. See chats is always on.
@@ -463,11 +468,11 @@
       // the countdown moves every second; the view is read every 2 s
       const c = doc().getElementById('dvCountdown');
       if (c && D.pair) c.textContent = countdown(D.pair.expiresAt);
-      if (D.tick % (POLL_MS / 1000) === 0) refresh();
+      if (D.tick % Math.round(POLL_MS / TICK_MS) === 0) refresh();
       if (!visible() || !D.boxes.access || !D.boxes.access.isConnected || !D.view) return;
       const waiting = setupSteps(D.view, D.ui).waiting;
       if (Date.now() - D.lastRefresh >= refreshEvery(waiting, Date.now() - D.shownAt)) recheck();
-    }, 1000);
+    }, TICK_MS);
   }
 
   // ---- drawing ----

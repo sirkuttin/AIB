@@ -31,14 +31,14 @@ import {
   wheel,
 } from './_scroll_lab.ts';
 
-function historyTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900]) {
+function historyTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900], pollScale?: number) {
   Deno.test({
     name,
     ignore: !browserPath || Deno.env.get('AIB_SCROLL_V2') === '0', // history-v2 needs scroll-v2
     sanitizeResources: false,
     sanitizeOps: false,
     async fn() {
-      const lab = await Lab.open(size[0], size[1]);
+      const lab = await Lab.open(size[0], size[1], undefined, { pollScale });
       try {
         await fn(lab);
         assert(lab.page.errors.length === 0, `console errors: ${lab.page.errors.join(' | ')}`);
@@ -211,7 +211,7 @@ historyTest('h4 a side pane on a chat uses the shared cache: no opening page or 
   const bStates = forId(list, '/api/live/state', b.id);
   const close = bStates.filter((r, i) => i > 0 && r.at - bStates[i - 1].at < 300);
   assert(close.length === 0, `two reads of the open chat within 300 ms: ${close.length}`);
-});
+}, [1600, 900], 1); // counts reads per second: the real poll periods
 
 historyTest("h5 a helper's history is fetched when it is opened (the chat's open has none of its events)", async (lab) => {
   const page = lab.page;

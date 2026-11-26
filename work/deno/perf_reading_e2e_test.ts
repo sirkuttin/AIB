@@ -12,6 +12,7 @@
  */
 import { assert } from './_assert.ts';
 import { anchor, browserPath, Lab, m, ownerProblems, sleep, wheel, whereIs } from './_scroll_lab.ts';
+Lab.pollScale = 1; // this file's checks depend on the app's real poll periods
 import { metrics, openLongChat, sampleFor } from './_perf_lab.ts';
 
 const DRAWN_MAX = 700; // chat.js DRAW_MAX (500) + a step drawn below + rows the place keeps; before: 3000

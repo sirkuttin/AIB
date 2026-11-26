@@ -17,6 +17,7 @@
  */
 import { assert } from "./_assert.ts";
 import { browserPath, Lab, sleep } from "./_scroll_lab.ts";
+Lab.pollScale = 1; // perf measurements use the real poll periods
 import {
   metrics,
   openLongChat,

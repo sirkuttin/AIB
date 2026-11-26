@@ -37,6 +37,7 @@ import {
   stopRowFrames,
   wheel,
 } from './_scroll_lab.ts';
+Lab.pollScale = 1; // this file's checks depend on the app's real poll periods
 
 const ALL = Deno.env.get('AIB_LAYOUT_ALL') === '1';
 

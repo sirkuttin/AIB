@@ -180,6 +180,8 @@ export class Browser {
    * as the desktop side hands a fresh one-time key to its windows. False: a plain browser (only a link with the key connects).
    */
   fakeApp = true;
+  /** How many times faster the page's polls run (open(), below). 1: the app's real periods. */
+  pollScale = Math.max(1, Number(Deno.env.get('AIB_PAGE_POLL_SCALE') ?? 5) || 1);
   constructor(proc: Deno.ChildProcess, profile: string, port: number) {
     this.#proc = proc;
     this.profile = profile;
@@ -237,6 +239,11 @@ export class Browser {
         "window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(e.violatedDirective + ' ' + (e.blockedURI || '') + ' ' + (e.sourceFile || '') + ':' + e.lineNumber));",
     });
     if (this.fakeApp) await page.send('Page.addScriptToEvaluateOnNewDocument', { source: fakeAppBinding() });
+    // Every page a test opens polls PAGE_POLL_SCALE times faster (window.__aibTestPollScale, read by chat.js, changes-ui.js and
+    // artifacts-ui.js; nothing sets it in the app), so a test waits ~1 s less for each update it reads through a poll. A test that
+    // checks a poll's own cadence sets `browser.pollScale = 1` before open(); AIB_PAGE_POLL_SCALE=1 turns it off for a whole run.
+    const k = this.pollScale;
+    if (k > 1) await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__aibTestPollScale = ${k};` });
     await page.viewport(width, height);
     await page.goto(url);
     return page;

@@ -13,7 +13,7 @@
 import { assert, assertEquals } from "./_assert.ts";
 import { DEVICE_HEADER } from "../../app/server/remote/server.ts";
 import { readRemotePort } from "../../app/server/remote/port.ts";
-import { PHONE_TTL_MS } from "../../app/server/attention/presence.ts";
+
 import { startAttention } from "../../app/server/attention/watcher.ts";
 
 import {
@@ -27,8 +27,11 @@ import {
   serveStatus,
 } from "./_remote_fixture.ts";
 
-// The watcher's settle before "finished" is 20 s (usage study); these whole-AIB runs keep the old 3 s (watcher.ts).
-Deno.env.set('AIB_TEST_SETTLE_MS', '3000');
+// The watcher's settle before "finished" is 20 s (usage study); these whole-AIB runs run it at 1 s (watcher.ts).
+Deno.env.set('AIB_TEST_SETTLE_MS', '1000');
+// The phone TTL is 15 s; the test phone polls every second, so 3 s is a real expiry here (presence.ts phoneTtlMs).
+const TEST_TTL_MS = 3000;
+Deno.env.set('AIB_TEST_PHONE_TTL_MS', String(TEST_TTL_MS));
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
@@ -196,7 +199,7 @@ Deno.test({
       await sleep(300);
       finish(x);
       const ended = Date.parse(x.attention.turnEndedAt as string);
-      // the watcher waits SETTLE_MS (3 s) before "finished": then it decides
+      // the watcher waits SETTLE_MS (1 s here) before "finished": then it decides
       assert(
         await t.until(() =>
           (t.s.ctx.readState.public().chats["claude:s-c1"]?.seenAt ?? 0) >=
@@ -238,7 +241,7 @@ Deno.test({
       await t.show("/api/remote/chat?id=c1&tail=50");
       await sleep(200);
       t.hide(); // screen off: no more polls, no beacon
-      await sleep(PHONE_TTL_MS + 500);
+      await sleep(TEST_TTL_MS + 500);
       assertEquals(t.s.ctx.presence.phones(), [], "expired");
       finish(x);
       assert(await t.until(() => t.pushes.length === 1), "pushed");
@@ -366,7 +369,7 @@ Deno.test({
         200,
       );
       finish(x);
-      await sleep(4500);
+      await sleep(2500); // the 1 s settle and a few looks
       needYou(x, "k1");
       await sleep(1500);
       assertEquals([t.pushes.length, t.desktop.length], [0, 0]);
