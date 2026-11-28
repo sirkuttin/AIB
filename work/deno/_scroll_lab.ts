@@ -205,13 +205,13 @@ export class Lab {
 
   /** A saved Claude Code transcript (no live connection: the page reads it through /api/transcript every 1.5 s, the way it
    *  watches a chat another program is writing). `add*` append rows to the file at once. */
-  savedChat(session: string): Saved {
+  savedChat(session: string, agoMs = 3600_000): Saved {
     const cwd = this.fx.workspace;
     const folder = `${this.fx.root}/claude/${cwd.replace(/[^A-Za-z0-9]/g, '-')}`;
     Deno.mkdirSync(folder, { recursive: true });
     const file = `${folder}/${session}.jsonl`;
     let n = 0;
-    let clock = Date.now() - 3600_000;
+    let clock = Date.now() - agoMs;
     const row = (type: string, message: Record<string, unknown>) => {
       clock += 1000;
       n++;

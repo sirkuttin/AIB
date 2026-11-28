@@ -6421,7 +6421,7 @@
   /* An idle chat on screen is re-read at most this often when nothing signalled a change. Every signal (its list row's file time, a turn
      ending or starting, its helpers changing in the swarm list) re-reads it at once, so this is only the backstop: at 10 s, 40 idle chats
      cost 3 requests (transcript, agents, commands) a second for nothing (perf_polls_test.ts). */
-  const IDLE_REREAD_MS = 60000 / TEST_POLL_SCALE;
+  const IDLE_REREAD_MS = 300000 / TEST_POLL_SCALE;
   /* A working chat that is not the open one is read for Activity at this pace; the open chat is read every tick. */
   const WORKING_REREAD_MS = 4000;
   /* What the swarm list says about the helpers and subagents of chat `key`: changes when one is added, ends or is renamed. */
@@ -6671,7 +6671,7 @@
     if (projAct.busy || document.hidden) return; // a hidden window reads nothing; visibilitychange reads at once
     projAct.busy = true;
     try {
-      if (!swarm.at || Date.now() - swarm.at > pollEvery(1500, 5000) - 100) await loadSwarmHelpers();
+      if (!swarm.at || Date.now() - swarm.at > pollEvery(3000, 6000) - 100) await loadSwarmHelpers();
       const keys = projectActivityKeys().slice();
       // an open history of a chat that just stopped working keeps being read until you close it
       if (subOwner && inspectorOpen() && !keys.includes(subOwner)) keys.push(subOwner);

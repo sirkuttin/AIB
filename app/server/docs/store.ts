@@ -1764,6 +1764,7 @@ export class DocStore {
   }
 
   async close(): Promise<void> {
+    clearMemos(); // no doc is open after this: the kept docs lists say 'open'
     if (this.#poll !== null) clearInterval(this.#poll), this.#poll = null;
     for (const doc of this.docs.values()) {
       await this.flush(doc).catch(() => {});

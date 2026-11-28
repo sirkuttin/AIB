@@ -8,7 +8,7 @@
   // textContent. The status is read once at start and every 5 s only while this PC has a WSL2 distro.
   const doc = () => root.document;
   const PREFIX = 'wsl://';
-  const POLL_MS = 5000;
+  const POLL_MS = 10000;
   const el = (tag, content, cls) => {
     const n = doc().createElement(tag);
     if (content != null && content !== '') n.textContent = String(content);
