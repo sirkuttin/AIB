@@ -39,6 +39,11 @@ import { ensureHiddenConsole } from '../platform/console.ts';
 import { isDesktopApp } from '../core/app.ts';
 
 export const WAIT_FOR_APP_SECONDS = 90;
+/** After this long the helper ends the old app itself (its own quit hangs on a stuck step); the chats stay in the keeper. */
+export const END_APP_AFTER_SECONDS = 30;
+function defaultKill(pid: number): void {
+  Deno.kill(pid, 'SIGKILL');
+}
 export const UNPACK_TIMEOUT_SECONDS = 600;
 /** The new app counts as started when it is still running (or exited with 0) this long after the spawn. */
 export const STARTUP_SECONDS = 8;
@@ -108,6 +113,8 @@ export interface StartResult {
 export interface HelperDeps {
   /** Is the old app still running? */
   alive?: (pid: number) => boolean;
+  /** End the old app by its pid when it has not quit after END_APP_AFTER_SECONDS (default: SIGKILL / TerminateProcess). */
+  kill?: (pid: number) => void;
   sleep?: (seconds: number) => void | Promise<void>;
   /** Unpack the archive into dest (a new, empty folder). Throws on failure. */
   unpack?: (archive: string, dest: string, kind: UpdateKind) => Promise<void>;
@@ -461,7 +468,19 @@ async function runSteps(args: Partial<HelperArgs> | Record<string, unknown>, _de
   };
   log(note, `update to ${args.version ?? 'None'}: waiting for the app (pid ${pid ?? 'None'}) to quit`);
   let waited = 0;
+  let ended = false;
+  const endAfter = Number(Deno.env.get('AIB_UPDATE_END_APP_AFTER')) || END_APP_AFTER_SECONDS;
   while (pid && alive(Number(pid))) {
+    if (!ended && waited >= endAfter) {
+      // The old app was asked to quit and has not: end it by its pid (the chats are in the keeper, which this does not touch).
+      ended = true;
+      try {
+        (_deps.kill ?? defaultKill)(Number(pid));
+        log(note, `the app (pid ${pid}) did not quit within ${endAfter} s; ended it`);
+      } catch (error) {
+        log(note, `the app (pid ${pid}) did not quit within ${endAfter} s and could not be ended (${error instanceof Error ? error.message : error})`);
+      }
+    }
     if (waited >= WAIT_FOR_APP_SECONDS) {
       log(note, 'the app did not quit; nothing was installed');
       return 2;

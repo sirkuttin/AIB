@@ -1596,6 +1596,7 @@ export class UpdateService {
    * (`from` 'pc', not whenIdle): otherwise it throws 'password_on_pc' and leaves Install now waiting on the PC (status().askOnPc).
    */
   async install(whenIdle = false, from: 'pc' | 'remote' = 'pc'): Promise<InstallResult> {
+    if (this.#helperStarted) return { state: 'installing' }; // already updating: the helper runs and this app is quitting
     const status = this.status();
     if (status.state !== 'ready') throw new UpdateError('There is no verified update to install.', 'not_ready');
     if (!status.inPlace) {
@@ -1729,6 +1730,19 @@ export class UpdateService {
 
   /** Start the helper and quit: it swaps the files (or, for a .deb, only starts the version apt installed). */
   async #restart(got: Downloaded, target: InstallTarget, release: boolean): Promise<void> {
+    this.#helperStarted = true; // a second click while this app is quitting starts no second helper
+    try {
+      await this.#launch(got, target, release);
+    } catch (error) {
+      this.#helperStarted = false;
+      throw error;
+    }
+    if (this.quit) this.quit(release);
+  }
+
+  #helperStarted = false;
+
+  async #launch(got: Downloaded, target: InstallTarget, release: boolean): Promise<void> {
     await this.launcher({
       installer: got.path,
       sha256: got.sha256,
@@ -1742,7 +1756,6 @@ export class UpdateService {
       marker: startedMarker(this.root, got.version),
       ...(release && this.#keeperData ? { keeper: this.#keeperData } : {}),
     });
-    if (this.quit) this.quit(release);
   }
 
   /**

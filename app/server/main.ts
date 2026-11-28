@@ -446,6 +446,24 @@ export async function main(argv: string[]): Promise<void> {
       why,
       release && aib ? (hold ? '; the keeper holds the chats until AIB is started again' : '; leaving the chats in the keeper') : '',
     );
+    // A hard bound: a step that hangs (a WSL helper call, a docs list, a long request the server waits for) never keeps this
+    // process alive. The chats are in the keeper; the process just ends. (The update helper also ends us after 30 s.)
+    const bound = Number(Deno.env.get('AIB_CLOSE_BOUND_MS')) || (release ? 10_000 : 30_000);
+    setTimeout(() => {
+      log.announce('studio', 'closing: a step did not finish within %s s; exiting now', bound / 1000);
+      try {
+        folderLock?.release();
+      } catch { /* exiting anyway */ }
+      Deno.exit(0);
+    }, bound);
+    const within = async (step: Promise<unknown>, ms: number) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([step.catch(() => {}), new Promise((resolve) => timer = setTimeout(resolve, ms))]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
     // hold (Quit AIB with work running): the keeper restarts no AIB in the tray and keeps every chat and terminal shell until the next
     // AIB takes them over. Told through each link before it closes (terminal shells alone may be what works); Aib.release repeats
     // it last.
@@ -460,15 +478,18 @@ export async function main(argv: string[]): Promise<void> {
     ctx.updates.stop();
     backups.stop();
     wslBackups.stop();
-    await ctx.artifacts.stop().catch(() => {});
-    await attention.stop().catch(() => {});
-    await swarm.stopWatching().catch(() => {});
+    const slice = release ? 1500 : 5000;
+    await within(ctx.artifacts.stop(), slice);
+    await within(attention.stop(), slice);
+    await within(swarm.stopWatching(), slice);
     ctx.keepAwake.release();
-    await ctx.phone.close().catch(() => {});
-    await server.close(release).catch(() => {}); // release (an update): terminal shells in the keeper keep running
+    await within(ctx.phone.close(), slice);
+    await within(server.close(release), release ? 3000 : 10_000); // release (an update): terminal shells in the keeper keep running
     // split: detach only; in-process: stops every agent; release (an update with the keeper): the chats stay in the keeper.
-    if (release && aib) await aib.release({ hold }).catch(() => {});
-    else await host.close().catch(() => {});
+    if (release && aib) await within(aib.release({ hold }), 5000);
+    else await within(host.close(), 20_000);
+    // Test hook (e2e: the quit for an update must end within its bound although a step never returns).
+    if (Deno.env.get('AIB_TEST_CLOSE_HANG') === '1') await new Promise(() => {});
     folderLock?.release();
     Deno.exit(0);
   };

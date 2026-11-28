@@ -26,6 +26,8 @@ type Json = Record<string, unknown>;
 
 const CALL_MS = 120_000;
 const LAND_MS = 600_000;
+/** Reading unlanded work (a git status, a patch or a branch name): a minute, never ten (a slow or stuck distro must not hold a poll). */
+const WORK_MS = 60_000;
 
 /** A chat that works in a WSL folder: the helper's facts for it (Linux paths), else null (the Windows service handles it). */
 export function wslSubagentChat(chat: {
@@ -202,7 +204,7 @@ export async function wslSubagentLand(
  */
 export async function wslSubagentWork(distro: string, id: string, op: 'status' | 'diff' | 'keep', name = ''): Promise<HelperMethods['subagent.work']['result'] | null> {
   try {
-    return await call(distro, 'subagent.work', { id, op, ...(name ? { name } : {}) }, LAND_MS);
+    return await call(distro, 'subagent.work', { id, op, ...(name ? { name } : {}) }, WORK_MS);
   } catch (error) {
     if (!missing(error)) log.warning('wsl: unlanded work could not be read: %s', why(error));
     return null;

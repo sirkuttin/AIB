@@ -1481,8 +1481,10 @@ Deno.test("helper: a changed package, an app that will not quit, a package with 
   {
     const c = await windowsCase();
     const { deps: d, sleeps } = deps(c, [], { aliveFor: 10 ** 6 });
-    assertEquals(await runHelper(c.args, d), 2);
+    const killed: number[] = [];
+    assertEquals(await runHelper(c.args, { ...d, kill: (pid: number) => void killed.push(pid) }), 2);
     assertEquals([sleeps.length, c.started], [180, []]);
+    assertEquals(killed, [77], "it ended the old app by its pid, once, before giving up");
     assertOldInstall(c.app);
     Deno.removeSync(c.dir, { recursive: true });
   }
@@ -1495,6 +1497,41 @@ Deno.test("helper: a changed package, an app that will not quit, a package with 
   }
   assertEquals(await runHelper({ installer: "x", sha256: "x", pid: 0 }, { alive: () => false }), 1);
   assertEquals(await runHelper({ installer: "/nope", sha256: "x", pid: 0, kind: "windows-zip", target: "/t", exe: "/t/AIB.exe" }), 3);
+});
+
+Deno.test("helper: an app that does not quit within 30 s is ended by its pid and the update goes on", async () => {
+  const c = await windowsCase();
+  try {
+    let left = 100; // 50 s of waiting; the app dies the moment it is killed
+    const killed: number[] = [];
+    const { deps: d, sleeps } = deps(c);
+    const dd = {
+      ...d,
+      alive: () => left-- > 0,
+      kill: (pid: number) => {
+        killed.push(pid);
+        left = 0;
+      },
+    };
+    assertEquals(await runHelper(c.args, dd), 0);
+    assertEquals(killed, [77]);
+    assertEquals(sleeps.length, 61, "30 s of waiting at 0.5 s, it ended the app, one more look");
+    assertEquals(c.started.length, 1, "the new version started");
+    assert(Deno.readTextFileSync(`${c.dir}/install.log`).includes("did not quit within 30 s; ended it"));
+  } finally {
+    Deno.removeSync(c.dir, { recursive: true });
+  }
+});
+
+Deno.test("install now twice: one helper only, the second click answers 'installing'", async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start();
+  env.base(fake.base);
+  const { svc, launched, quit } = await ready(env, 0);
+  assertEquals((await svc.install()).state, "installing");
+  assertEquals((await svc.install()).state, "installing");
+  assertEquals((await svc.install(true)).state, "installing");
+  assertEquals([launched.length, quit.length], [1, 1]);
 });
 
 Deno.test("helper: macOS swaps the whole AIB.app bundle (on real folders; ditto itself only runs on a Mac)", async () => {

@@ -206,6 +206,7 @@ Deno.test({
       FAKE_ACP_LOG: agentLog,
       FAKE_ACP_MCP_PIDS: mcpPids, // the fake agent starts its stdio MCP servers like a real agent
       AIB_TEST_TRAY_STATE: trays,
+      AIB_TEST_CLOSE_HANG: '1', // A's quit for the update has a step that never returns: the 10 s bound ends it (main.ts close)
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=0',
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1', // the built app cannot see work/, so its test guard is told the agent is the fake one
       AIB_TEST_FIXTURE_ROOT: nativePath(new URL('keeper-fixture/', WORK)), // and its test auth guard: only programs in this folder are fakes
@@ -286,7 +287,14 @@ Deno.test({
       assert(!before.includes(`chunk${CHUNKS - 1} `), 'still mid-turn when Install now is clicked');
       const [is, installing] = await post(tokenA, 'update/install', {});
       assertEquals([is, installing.state, installing.chats], [200, 'installing', 1], JSON.stringify(installing));
+      // A second click (the owner clicked twice) starts no second helper and answers that the update is in progress.
+      const clicked = Date.now();
+      const [is2, installing2] = await post(tokenA, 'update/install', {});
+      assertEquals([is2, installing2.state], [200, 'installing'], JSON.stringify(installing2));
+      // A's quit hangs forever in this run (AIB_TEST_CLOSE_HANG): it still ends within its 10 s bound, the helper never has to kill it.
       await until(() => !pidAlive(aPid), 'A quit', 60);
+      const quitSeconds = (Date.now() - clicked) / 1000;
+      assert(quitSeconds < 25, `A quit within its bound although a step hung (${quitSeconds} s)`);
       assert(pidAlive(keeperPid), 'the keeper outlived A');
       assert(pidAlive(agentPid), 'the agent outlived A');
 
@@ -342,6 +350,8 @@ Deno.test({
       assertEquals([after.live, after.pid], [true, agentPid], 'the same agent process');
       assertEquals(readKeeperInfo(fx.state)!.pid, keeperPid, 'the same keeper process, kept running across the update');
       const installLog = Deno.readTextFileSync(`${fx.state}\\updates\\install.log`);
+      assertEquals(installLog.split('waiting for the app').length - 1, 1, 'one helper only (the double click started no second one)');
+      assert(!installLog.includes('ended it'), 'the app quit by itself within its bound; the helper did not have to end it');
       assert(installLog.includes('staying connected to the keeper'), installLog);
       assert(installLog.includes('the new version is running (it confirmed its start)'), installLog);
       assert([...Deno.readDirSync(trays)].some((e) => e.name.startsWith('helper-')), 'the update helper showed a tray icon');
@@ -361,6 +371,7 @@ Deno.test({
       const aibLog = Deno.readTextFileSync(`${fx.state}\\studio.log`);
       assert(aibLog.includes('closing (installing an update); leaving the chats in the keeper'), aibLog.slice(-3000));
       assert(aibLog.includes('released 1 chat(s) to the keeper'), aibLog.slice(-3000));
+      assert(aibLog.includes('closing: a step did not finish within 10 s; exiting now'), aibLog.slice(-3000));
       assert(aibLog.includes('keeper: 1 chat(s) taken over from the keeper'), aibLog.slice(-3000));
 
       // ---- the artifact tool is the keeper's forwarder, so B removed the update's leftovers although the chat runs
