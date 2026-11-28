@@ -86,6 +86,7 @@
     return 'main';
   }
   const byKey = (a, b) => keyOf(a).localeCompare(keyOf(b));
+  const rankOf = (c) => Number(entryOf(c).rank) || 0;
 
   // rows arrive filtered for provider and search and already in the main-list order.
   function partition(rows) {
@@ -99,6 +100,13 @@
     out.pinned.sort((a, b) => entryOf(b).pinnedAt - entryOf(a).pinnedAt || byKey(a, b));
     out.hold.sort((a, b) => entryOf(b).holdAt - entryOf(a).holdAt || byKey(a, b));
     out.archived.sort((a, b) => entryOf(b).archivedAt - entryOf(a).archivedAt || byKey(a, b));
+    // A manual order (drag to reorder) wins; a chat never placed by hand (a new one) goes first. The sort is stable.
+    const byRank = (a, b) => {
+      const x = rankOf(a),
+        y = rankOf(b);
+      return x && y ? x - y : x ? 1 : y ? -1 : 0;
+    };
+    for (const k of ['pinned', 'hold', 'main']) out[k].sort(byRank);
     if (host && typeof host.nest === 'function') for (const k of Object.keys(out)) out[k] = host.nest(out[k]); // listed helpers right after their main chat
     return out;
   }
@@ -875,6 +883,11 @@
       main.append(note);
     }
     rendered.push({ key: keyOf(c), main, more, visible });
+    if (node.dataset) {
+      node.dataset.rowKey = keyOf(c);
+      node.dataset.bucket = bucket(c);
+    }
+    if (main && main.addEventListener) main.addEventListener('pointerdown', (event) => beginReorder(event, node));
     bindContext(node, c, main);
     if (main && main.addEventListener) main.addEventListener('keydown', (event) => stepCard(event, keyOf(c)));
     return node;
@@ -882,6 +895,15 @@
   // Up / Down move between the cards you can see (QA m7): one arrow key instead of two Tab stops per chat.
   function stepCard(event, key) {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      // Alt+Up / Alt+Down move the focused chat one place (the keyboard way of dragging)
+      const node = event.currentTarget && event.currentTarget.parentElement;
+      if (node && node.dataset && node.dataset.rowKey === key) {
+        if (event.preventDefault) event.preventDefault();
+        moveByKey(node, event.key === 'ArrowDown' ? 1 : -1);
+      }
+      return;
+    }
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     const list = rendered.filter((r) => r.main && !r.deletedItem && r.visible() && !r.main.hidden),
       at = list.findIndex((r) => r.key === key && r.main === event.currentTarget),
@@ -890,6 +912,188 @@
     if (i < 0 || !next) return;
     if (event.preventDefault) event.preventDefault();
     next.main.focus();
+  }
+  // ---- drag to reorder (the whole card is the handle) ---------------------------------------------------------------------------
+  // A chat moves among the chats of its own section (same list, same bucket); a listed helper only among its main chat's helpers; a
+  // main chat takes its listed helpers with it. The order is saved per chat as a rank (the server's `reorder` action).
+  const isRow = (n) => !!(n && n.classList && n.classList.contains('conversation-row') && n.dataset && n.dataset.rowKey);
+  // The units one row can be moved among: [{key, rows}] in list order, and the unit of that row.
+  function unitsOf(node) {
+    const box = node.parentElement;
+    if (!box) return null;
+    const same = [...box.children].filter((n) => isRow(n) && n.dataset.bucket === node.dataset.bucket);
+    const keys = new Set(same.map((n) => n.dataset.rowKey));
+    const parent = node.dataset.parent || '';
+    let units;
+    const helper = !!(parent && keys.has(parent));
+    if (helper) {
+      units = same.filter((n) => n.dataset.parent === parent).map((n) => ({ key: n.dataset.rowKey, rows: [n] }));
+    } else {
+      units = [];
+      for (const n of same) {
+        const p = n.dataset.parent || '';
+        const top = p && keys.has(p) ? units.find((u) => u.key === p) : null;
+        if (top) top.rows.push(n);
+        else units.push({ key: n.dataset.rowKey, rows: [n] });
+      }
+    }
+    const mine = units.find((u) => u.rows.includes(node));
+    return mine ? { box, units, mine, helper } : null;
+  }
+  const unitRect = (u) => {
+    const a = u.rows[0].getBoundingClientRect(),
+      b = u.rows[u.rows.length - 1].getBoundingClientRect();
+    return { top: a.top, bottom: b.bottom, left: a.left, width: a.width };
+  };
+  // Where a unit dropped at height y lands: the unit it goes before (null = at the end) and the keys in the new order.
+  function slotFor(set, y) {
+    // a helper is only placed among its main chat's helpers: a pointer outside that group moves nothing
+    if (set.helper && (y < unitRect(set.units[0]).top || y > unitRect(set.units[set.units.length - 1]).bottom)) return { same: true, at: null };
+    const others = set.units.filter((u) => u !== set.mine);
+    let before = null;
+    for (const u of others) {
+      const r = unitRect(u);
+      if (y < r.top + (r.bottom - r.top) / 2) {
+        before = u;
+        break;
+      }
+    }
+    const order = others.map((u) => u.key);
+    order.splice(before ? order.indexOf(before.key) : order.length, 0, set.mine.key);
+    const same = order.every((k, i) => k === set.units[i].key);
+    let at = null;
+    if (before) at = unitRect(before).top;
+    else if (others.length) at = unitRect(others[others.length - 1]).bottom;
+    const ref = before ? unitRect(before) : others.length ? unitRect(others[others.length - 1]) : unitRect(set.mine);
+    return { before, order, same, at, left: ref.left, width: ref.width, others };
+  }
+  function placeUnit(set, slot) {
+    const first = slot.before ? slot.before.rows[0] : slot.others.length ? slot.others[slot.others.length - 1].rows.slice(-1)[0].nextSibling : null;
+    for (const n of set.mine.rows) set.box.insertBefore(n, first);
+  }
+  async function saveOrder(order) {
+    await guarded(async () => {
+      await host.post('conversation-state', { action: 'reorder', keys: order });
+      await fetchState();
+      host.rerender();
+    });
+  }
+  function moveByKey(node, dir) {
+    const set = unitsOf(node);
+    if (!set) return;
+    const i = set.units.indexOf(set.mine),
+      j = i + dir;
+    if (j < 0 || j >= set.units.length) return;
+    const order = set.units.map((u) => u.key);
+    [order[i], order[j]] = [order[j], order[i]];
+    const other = set.units[j];
+    const slot = { before: dir < 0 ? other : set.units[j + 1] || null, others: set.units.filter((u) => u !== set.mine) };
+    placeUnit(set, slot);
+    const main = node.children && node.children[0];
+    if (main && main.focus) main.focus();
+    return saveOrder(order);
+  }
+  const reorder = { press: null, line: null };
+  function reorderEnd() {
+    const r = reorder.press;
+    reorder.press = null;
+    if (reorder.line && reorder.line.remove) reorder.line.remove();
+    reorder.line = null;
+    if (r && r.node.classList) r.node.classList.remove('reorder-lift');
+    const d = doc();
+    d.removeEventListener('pointermove', reorderMove, true);
+    d.removeEventListener('pointerup', reorderUp, true);
+    d.removeEventListener('pointercancel', reorderCancel, true);
+    d.removeEventListener('keydown', reorderKey, true);
+  }
+  function beginReorder(event, node) {
+    if (event.button !== 0 || event.pointerType === 'touch' || reorder.press || !isRow(node)) return;
+    if (node.closest && node.closest('#archivedList')) return;
+    reorder.press = { node, key: node.dataset.rowKey, x0: event.clientX, y0: event.clientY, on: false, slot: null, set: null };
+    const d = doc();
+    d.addEventListener('pointermove', reorderMove, true);
+    d.addEventListener('pointerup', reorderUp, true);
+    d.addEventListener('pointercancel', reorderCancel, true);
+    d.addEventListener('keydown', reorderKey, true);
+  }
+  function reorderMove(event) {
+    const r = reorder.press;
+    if (!r) return;
+    if (!r.on) {
+      if (Math.hypot(event.clientX - r.x0, event.clientY - r.y0) < 6) return;
+      r.on = true;
+    }
+    // the list may be drawn again while dragging (a chat finished, a poll): find the card again
+    if (!refind(r)) {
+      reorderEnd();
+      return;
+    }
+    r.node.classList.add('reorder-lift');
+    const list = $('connections'),
+      lr = list && list.getBoundingClientRect ? list.getBoundingClientRect() : null;
+    const inside = !!lr && event.clientX >= lr.left && event.clientX <= lr.right && event.clientY >= lr.top && event.clientY <= lr.bottom;
+    r.slot = null;
+    if (reorder.line) reorder.line.style.display = 'none';
+    if (!inside) return;
+    if (event.clientY < lr.top + 24) list.scrollTop -= 12;
+    else if (event.clientY > lr.bottom - 24) list.scrollTop += 12;
+    r.y = event.clientY;
+    const slot = planFor(r);
+    if (!slot) return;
+    if (!reorder.line) {
+      reorder.line = el('div', null, 'reorder-line');
+      doc().body.append(reorder.line);
+    }
+    const s = reorder.line.style;
+    s.display = '';
+    s.top = Math.round(slot.at - 1) + 'px';
+    s.left = Math.round(slot.left) + 'px';
+    s.width = Math.round(slot.width) + 'px';
+  }
+  function refind(r) {
+    if (r.node.isConnected) return true;
+    const again = [...doc().querySelectorAll('.conversation-row')].find((n) => n.dataset && n.dataset.rowKey === r.key);
+    if (again) r.node = again;
+    return !!again;
+  }
+  // The drop place for the held card at its last height, from the list as drawn now (null: nowhere, or no change).
+  function planFor(r) {
+    r.set = unitsOf(r.node);
+    if (!r.set || r.set.units.length < 2) return null;
+    const slot = slotFor(r.set, r.y);
+    r.slot = slot.same || slot.at == null ? null : slot;
+    return r.slot;
+  }
+  function swallowClick(held) {
+    const stop = (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+    };
+    const d = doc();
+    d.addEventListener('click', stop, true);
+    const off = () => d.removeEventListener('click', stop, true);
+    if (held) d.addEventListener('pointerup', () => (root.setTimeout || setTimeout)(off, 0), { capture: true, once: true });
+    else (root.setTimeout || setTimeout)(off, 0);
+  }
+  function reorderUp() {
+    const r = reorder.press;
+    reorderEnd();
+    if (!r || !r.on) return;
+    swallowClick(); // the click that ends a drag opens nothing
+    if (!r.slot || !refind(r)) return;
+    const slot = planFor(r); // the list as it is drawn now
+    if (!slot) return;
+    placeUnit(r.set, slot);
+    saveOrder(slot.order);
+  }
+  function reorderCancel() {
+    reorderEnd();
+  }
+  function reorderKey(event) {
+    if (event.key !== 'Escape' || !reorder.press) return;
+    const on = reorder.press.on;
+    reorderEnd(); // the split drag's own Escape runs too: one Esc cancels the whole drag
+    if (on) swallowClick(true); // the mouse is still down: its release opens nothing
   }
   function deletedItems(ctx) {
     const known = new Map(ctx.all.map((c) => [keyOf(c), c]));

@@ -1319,7 +1319,9 @@
       '',
       'connection' + (selected && aliasKey(selected) === aliasKey(c) ? ' selected' : ''),
     );
-    if (listedParentOf(c)) wrapper.classList.add('helper-listed'); // a listed helper: the same card, 24 px in under its main chat
+    const lp = listedParentOf(c);
+    if (lp) wrapper.classList.add('helper-listed'); // a listed helper: the same card, 24 px in under its main chat
+    if (lp) wrapper.dataset.parent = aliasKey(lp); // drag to reorder: a helper moves among its main chat's helpers only (organize-ui.js)
     button.dataset.key = aliasKey(c);
     button.append(
       text('small', workspace(c), 'connection-workspace'),
@@ -6267,13 +6269,15 @@
     }
     if (!kids.size) return list;
     const started = (c) => Number(helperRecord(c)?.createdAt) || 0;
+    const rank = (c) => Number(window.AgentOrganizeUI?.entryOf?.(c)?.rank) || 0; // a manual order (drag to reorder) wins; a new helper goes last
+    const byRank = (a, b) => (rank(a) && rank(b) ? rank(a) - rank(b) : rank(a) ? -1 : rank(b) ? 1 : 0);
     const out = [];
     const moved = new Set([...kids.values()].flat());
     for (const c of list) {
       if (moved.has(c)) continue;
       out.push(c);
       const own = kids.get(aliasKey(c));
-      if (own) out.push(...own.sort((a, b) => started(a) - started(b) || aliasKey(a).localeCompare(aliasKey(b))));
+      if (own) out.push(...own.sort((a, b) => byRank(a, b) || started(a) - started(b) || aliasKey(a).localeCompare(aliasKey(b))));
     }
     return out;
   }

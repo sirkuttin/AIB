@@ -14,6 +14,7 @@
  *             copy), or that another app may be using, is refused with the reason; the phone never takes a chat over.
  */
 import type { WebContext } from '../web/server.ts';
+import { ConversationState, type Marks } from '../state/conversations.ts';
 import { afterConnect, filterSessions } from '../web/project_routes.ts';
 import { handleGet as monitorGet } from '../transcripts/monitor.ts';
 import { CLIP_NOTE } from '../transcripts/pycompat.ts';
@@ -46,6 +47,8 @@ export interface SavedChat {
   lastActive: string;
   /** an agent AIB no longer runs (OMP): the chat is history only, with a note where Continue was (RETIRED_NOTE) */
   readOnly?: boolean;
+  /** the PC's manual order (drag to reorder); only once placed by hand */
+  rank?: number;
 }
 
 interface SavedEntry extends SavedChat {
@@ -132,6 +135,7 @@ export class SavedChats {
         agent,
         folder,
         lastActive: isoOf(when),
+        ...(ConversationState.listRank(mark as Partial<Marks>) ? { rank: ConversationState.listRank(mark as Partial<Marks>) } : {}),
         ...(isRetired(provider) ? { readOnly: true } : {}),
       });
     };
@@ -167,6 +171,7 @@ export function publicSaved(c: SavedEntry): SavedChat {
     agent: c.agent,
     folder: c.folder,
     lastActive: c.lastActive,
+    ...(c.rank ? { rank: c.rank } : {}),
     ...(c.readOnly ? { readOnly: true, note: RETIRED_NOTE } : {}),
   };
 }

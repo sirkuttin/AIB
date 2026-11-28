@@ -34,6 +34,8 @@ export interface Marks {
   stalledAt?: number;
   stallKind?: string;
   stallStep?: string;
+  /** The left list's manual order (drag to reorder): 1 = first of its section. Only kept while set (0 = never placed by hand). */
+  rank?: number;
 }
 
 /** The inbox's own fields of a mark (setInbox): a snooze and a saved stall. 0 / '' clears one. */
@@ -88,6 +90,13 @@ export class ConversationState extends JsonFileStore {
     return number > 0 && number < Infinity ? number : 0;
   }
 
+  /** One order for a list without sections (the phone): Pinned first, then Chats, then On hold, each by its manual rank; 0 = never placed by hand. */
+  static listRank(mark: Partial<Marks> | undefined): number {
+    const rank = Number(mark?.rank) || 0;
+    if (!rank) return 0;
+    return (mark?.holdAt ? 2 : mark?.pinnedAt ? 0 : 1) * 10000 + rank;
+  }
+
   static clean(key: unknown, item: unknown): Marks | null {
     if (!isStr(key) || !isDict(item)) return null;
     const index = key.indexOf(':');
@@ -103,7 +112,8 @@ export class ConversationState extends JsonFileStore {
     const handledAt = stamp(item.handledAt);
     const snoozedUntil = stamp(item.snoozedUntil);
     const stalledAt = stamp(item.stalledAt);
-    if (!pinnedAt && !archivedAt && !deletedAt && !holdAt && !yourTurnAt && !handledAt && !snoozedUntil && !stalledAt) return null;
+    const rank = Math.floor(stamp(item.rank));
+    if (!rank && !pinnedAt && !archivedAt && !deletedAt && !holdAt && !yourTurnAt && !handledAt && !snoozedUntil && !stalledAt) return null;
     const cwd = text(item.cwd, 1024);
     // the inbox's fields, only while set (an entry without them reads exactly as before)
     const inbox: InboxMarks = {};
@@ -120,6 +130,7 @@ export class ConversationState extends JsonFileStore {
     }
     return {
       ...inbox,
+      ...(rank ? { rank: Math.min(rank, ConversationState.MAX_ENTRIES) } : {}),
       pinnedAt,
       archivedAt,
       deletedAt,
@@ -300,6 +311,42 @@ export class ConversationState extends JsonFileStore {
       this.counter++;
       const saved = this.entries.get(key);
       return saved ? { ...saved } : null;
+    });
+  }
+
+  /**
+   * The left list's manual order: `keys` ('provider:sessionId', top to bottom) get rank 1..n. Other chats keep their ranks (a section
+   * is ranked on its own; a chat never placed by hand has none and lists first, as a new chat does). Error messages reach the HTTP API.
+   */
+  reorder(keys: unknown): Promise<number> {
+    if (!Array.isArray(keys) || !keys.length || keys.length > 500) return Promise.reject(new ValueError('Choose the chats to order'));
+    const list: string[] = [];
+    for (const k of keys) {
+      if (!isStr(k) || hasControl(k) || !ConversationState.clean(k, { rank: 1 })) return Promise.reject(new ValueError('Choose saved conversations'));
+      if (!list.includes(k)) list.push(k);
+    }
+    return this.locked(() => {
+      this.sync();
+      const before = deepCopy(this.entries);
+      list.forEach((key, i) => {
+        const base: Record<string, unknown> = { ...(this.entries.get(key) ?? { pinnedAt: 0, archivedAt: 0, deletedAt: 0, holdAt: 0, yourTurnAt: 0, handledAt: 0 }) };
+        base.rank = i + 1;
+        const cleaned = ConversationState.clean(key, base);
+        if (cleaned) this.entries.set(key, cleaned);
+      });
+      if (sameJson(this.entries, before)) return list.length;
+      this.#prune();
+      try {
+        this.#save();
+      } catch (error) {
+        if (!isOSError(error)) throw error;
+        this.entries = before;
+        this.warning = `AIB could not save the chat order: ${errorText(error)}`;
+        throw new ValueError(this.warning);
+      }
+      this.warning = '';
+      this.counter++;
+      return list.length;
     });
   }
 

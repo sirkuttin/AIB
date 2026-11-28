@@ -856,12 +856,18 @@
       items.push({ kind: 'saved', key: c.key, title: c.title, agent: c.agent, project: obj(c.project), at: Date.parse(c.lastActive || '') || 0, chat: c });
     }
     items.sort((a, b) => b.at - a.at || (a.kind === b.kind ? 0 : a.kind === 'live' ? -1 : 1));
+    // The PC's manual order (drag to reorder in the left list): once any chat was placed by hand the list follows it, and a chat
+    // never placed (a new one) stays first. Nothing re-sorts by activity then.
+    const rankOf = (i) => Number(obj(i.chat).rank) || 0;
+    if (items.some((i) => rankOf(i))) items.sort((a, b) => (rankOf(a) && rankOf(b) ? rankOf(a) - rankOf(b) : rankOf(a) ? 1 : rankOf(b) ? -1 : 0));
     const shown = filter ? items.filter((i) => i.project.id === filter) : items;
     // listed helpers: right under their main chat, in the order they were listed (a card whose main chat is not shown stays on its own)
     const keys = new Set(shown.filter((i) => i.kind === 'live' && !i.chat.under).map((i) => str(i.chat.key)));
     const subs = shown.filter((i) => i.kind === 'live' && i.chat.under && keys.has(str(i.chat.under)));
     if (!subs.length) return shown;
-    subs.sort((a, b) => (Number(a.chat.listedAt) || 0) - (Number(b.chat.listedAt) || 0));
+    subs.sort((a, b) =>
+      rankOf(a) && rankOf(b) ? rankOf(a) - rankOf(b) : rankOf(a) ? -1 : rankOf(b) ? 1 : (Number(a.chat.listedAt) || 0) - (Number(b.chat.listedAt) || 0),
+    );
     const out = [];
     for (const i of shown) {
       if (subs.includes(i)) continue;

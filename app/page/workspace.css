@@ -2558,3 +2558,16 @@ body.aib-mode-chat > main {
 aside .conversation-row.helper-listed {
   margin-left: 24px;
 }
+
+/* drag to reorder the left list: a clear drop line while dragging, the lifted card dimmed (organize-ui.js) */
+.reorder-line {
+  position: fixed;
+  z-index: 60;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+aside .conversation-row.reorder-lift {
+  opacity: 0.45;
+}

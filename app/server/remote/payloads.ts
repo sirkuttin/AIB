@@ -13,6 +13,7 @@
 import { claudeBase } from '../agents/claude_family.ts';
 import { createHash } from 'node:crypto';
 import type { WebContext } from '../web/server.ts';
+import { ConversationState, type Marks } from '../state/conversations.ts';
 import { permissionDetail, type PhoneOption, phoneOptions } from './actions.ts';
 import { type PhoneProject, projectsFor } from './projects.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
@@ -92,6 +93,8 @@ export interface HomeChat {
   /** A listed helper (left-list helpers, owner 2026-11-27): the key of its main chat, and when it was listed (seconds). Additive. */
   under?: string;
   listedAt?: number;
+  /** The PC's manual order of its left list (drag to reorder): 1 = first of its section. Only present once placed by hand. Additive. */
+  rank?: number;
 }
 
 /** The first request a chat waits on, as the phone's inbox card needs it (only the options a phone may pick: allow/deny once). */
@@ -530,6 +533,7 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
       line: titles.line(ctx, id, `${Number(c.cursor) || 0}|${needs}|${asks}|${c.busy ? 1 : 0}`, Number(c.cursor) || 0),
       ask: null,
       ...(sub ? { under: sub.under, listedAt: sub.listedAt } : {}),
+      ...(ConversationState.listRank(mark as Partial<Marks>) ? { rank: ConversationState.listRank(mark as Partial<Marks>) } : {}),
       at,
     });
   }

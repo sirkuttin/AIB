@@ -58,6 +58,8 @@ export interface ConversationsLike {
     note?: unknown,
     projectRoot?: unknown,
   ): Promise<unknown> | unknown;
+  /** The left list's manual order (drag to reorder). */
+  reorder?(keys: unknown): Promise<unknown> | unknown;
   revision(): string;
 }
 
@@ -576,6 +578,11 @@ export async function notices(self: Pick<AibContext, 'options' | 'hostInfo' | 'w
 export async function conversationAction(self: AibContext, body: unknown): Promise<[number, Record<string, unknown>]> {
   if (!isDict(body)) throw new ValueError('Invalid request');
   const { action, provider, sessionId } = body;
+  if (action === 'reorder') {
+    if (!self.conversations.reorder) throw new ValueError('Reordering is not available');
+    await self.conversations.reorder(body.keys); // the left list's manual order (drag to reorder)
+    return [200, { ok: true, revision: self.conversations.revision() }];
+  }
   if (action === 'delete' && await self.aibOwns(provider, sessionId)) {
     return [409, {
       error: 'This conversation is live in AIB. End the AIB session first; nothing was deleted.',
