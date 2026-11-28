@@ -106,7 +106,7 @@ import { agySetupMethods, type AgySetupMethods } from './aib_setup_agy.ts';
 import { copilotSetupMethods, type CopilotSetupMethods } from './aib_setup_copilot.ts';
 import { toolServersMethods, type ToolServersMethods } from './aib_toolservers.ts';
 import { ToolServers } from '../toolservers/service.ts';
-import { wslDiscoverServers } from '../wsl/toolservers.ts';
+import { wslCanWriteToolServers, wslDiscoverServers } from '../wsl/toolservers.ts';
 import { describeChange } from '../toolservers/store.ts';
 import { keeperMethods, type KeeperMethods } from './aib_keeper.ts';
 import { connectMethods, type ConnectMethods } from './aib_connect.ts';
@@ -254,7 +254,7 @@ export class Aib {
     this.store = this.hasStateDir ? new StateStore(this.stateDir, `recovery-${name}`) : null;
     this.addedProjects = this.hasStateDir ? new AddedProjects(this.stateDir) : null;
     this.toolServers = this.hasStateDir
-      ? new ToolServers(this.stateDir, { wsl: wslDiscoverServers, servedHash: (id) => this.served?.get(id)?.toolServers?.hash ?? null })
+      ? new ToolServers(this.stateDir, { wsl: wslDiscoverServers, wslCanWrite: wslCanWriteToolServers, servedHash: (id) => this.served?.get(id)?.toolServers?.hash ?? null })
       : null;
     this.allow = this.hasStateDir ? new AllowGate(this.stateDir) : null;
     // AIB's own lines (turn ends, notes) kept by conversation, so a chat rebuilt under another id shows them (history/lines.ts)

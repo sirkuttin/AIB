@@ -450,6 +450,16 @@ export interface HelperMethods {
    */
   /** The MCP servers the distro's agents name in their own config files, for a project folder (toolservers/discover.ts FoundServer[]); read only. */
   'toolservers.discover': { params: { folder: string }; result: { servers: Record<string, unknown>[] } };
+  /**
+   * The per-chat file of a tool server list that Gemini or Qwen needs, written in AIB's data folder in the distro (`<data>/toolservers/`;
+   * never ~/.gemini or ~/.qwen). Gemini: `toml` (admin policy rules) -> `path` = the folder for `--admin-policy`. Qwen: `fragment`
+   * (toolservers/apply.ts qwenFragment) merged into `base` (the chat's own settings file in AIB's data folder) or else the distro's Qwen
+   * system settings -> `path` = the file for QWEN_CODE_SYSTEM_SETTINGS_PATH. An older helper lacks the method (AIB then skips both).
+   */
+  'toolservers.write': {
+    params: { agent: 'gemini' | 'qwen'; hash: string; toml?: string; fragment?: Record<string, unknown>; base?: string; project?: string; env?: Record<string, string> };
+    result: { path: string };
+  };
   'proc.tree': { params: { roots: number[] }; result: { trees: Record<string, [number, number, number, number | null][] | null> } };
   /**
    * Stop on a WSL chat's background command (platform/kill_verified.ts run natively): `targets` are [pid, age in seconds] of the

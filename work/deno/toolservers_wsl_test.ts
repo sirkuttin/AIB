@@ -6,8 +6,8 @@
  *   - a Claude chat and a Copilot chat in a NEW WSL project start with the server that runs on the PC off (deniedMcpServers /
  *     --disable-mcp-server), the remote one on
  *   - a helper that can't answer switches nothing off (and caches nothing): the chat loads everything, as before this feature
- * Not applied in WSL yet (said in the chat's tool: `skipped`): Gemini's policy file and Qwen's settings file, which the helper would
- * have to write in the distro.
+ * Gemini's policy file and Qwen's settings file are written by the helper (`toolservers.write`, the last tests); an older helper skips both
+ * (said in `skipped`) and the card keeps its note.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
@@ -175,8 +175,8 @@ Deno.test({
       assertEquals(view.wsl, true);
       assertEquals(
         (view as unknown as { reach: Json[] }).reach.filter((r) => r.agent === 'gemini' || r.agent === 'qwen').map((r) => r.reach),
-        ['partial', 'none'],
-        'the card says what a WSL project does not follow yet',
+        ['enforced', 'enforced'],
+        'a distro whose helper writes the Gemini and Qwen files shows the same card as Windows',
       );
       assertEquals(view.servers.map((s) => [s.id, s.on]), [['studio_artifact', true], ['github', true], ['rea', false]]);
     } finally {
@@ -230,5 +230,181 @@ Deno.test({
     } finally {
       env();
     }
+  },
+});
+
+// ---- Gemini's policy file and Qwen's settings file, written by the helper in the distro ------------------------------------------
+// The real helper method (`toolservers.write`) runs in-process behind the fake host over a temp "distro data folder". Real gemini and
+// qwen are not installed in the WSL distro here, so there is no real distro run: what the CLIs do with these files is the Windows probe's
+// (aib-shared/designs/tool-servers/probe.md); here the files and the launch pieces are checked.
+const GQ_SERVERS = [
+  {
+    id: 'github',
+    kind: 'remote',
+    from: 'user',
+    fromText: 'Your user settings',
+    agents: ['gemini', 'qwen'],
+    entries: { gemini: { httpUrl: 'https://x.invalid/mcp' }, qwen: { httpUrl: 'https://x.invalid/mcp' } },
+  },
+  {
+    id: 'rea',
+    kind: 'local',
+    from: 'user',
+    fromText: 'Your user settings',
+    agents: ['gemini', 'qwen'],
+    entries: { gemini: { command: 'rea' }, qwen: { command: 'rea' } },
+  },
+];
+
+function gqLab(lab: WslLab) {
+  const data = lab.dir + SEP + 'distro-data';
+  const wslHome = lab.dir + SEP + 'distro-home';
+  Deno.mkdirSync(data, { recursive: true });
+  Deno.mkdirSync(wslHome, { recursive: true });
+  lab.answer = GQ_SERVERS;
+  const methods = makeMethods({
+    env: () => Promise.resolve({ env: { HOME: wslHome }, shell: '/bin/sh', home: wslHome, arch: 'x86_64' }),
+    data,
+  });
+  lab.host.handlers['toolservers.write'] = (p: Json) => methods['toolservers.write'](p) as never;
+  const aib = lab.aib();
+  const step = (provider: string, extra: Json = {}, prepared: Json | null = null) =>
+    aib.$toolServersStep(
+      {
+        provider,
+        resume: null,
+        command: [],
+        env: {},
+        cwd: REF,
+        workspace: REF,
+        worktree: false,
+        spawnEnv: null,
+        chatId: null,
+        distro: 'ubuntu',
+        wsl: true,
+        prepared: null,
+        launchCommand: [],
+        ...extra,
+      } as never,
+      prepared as never,
+    );
+  return { data, wslHome, aib, step };
+}
+
+Deno.test({
+  name: 'tool servers in WSL: Gemini gets the allowed server names and a policy file in the distro (server off, tool off); nothing in the distro home',
+  ...T,
+  async fn() {
+    await using lab = new WslLab();
+    const { data, wslHome, aib, step } = gqLab(lab);
+    await aib.$toolServersCall({ op: 'set', path: REF, server: 'rea', on: false });
+    await aib.$toolServersCall({ op: 'set', path: REF, server: 'github', tool: 'search', toolOn: false });
+    const out = (await step('gemini'))!;
+    assertEquals(out.skipped, []);
+    const i = out.args.indexOf('--allowed-mcp-server-names');
+    assert(i >= 0 && out.args.slice(i + 1).includes('github') && !out.args.slice(i + 1).includes('rea'), `server off is not allowed: ${out.args}`);
+    const p = out.args.indexOf('--admin-policy');
+    assert(p >= 0, out.args.join(' '));
+    const dir = out.args[p + 1];
+    assert(dir.startsWith(data + SEP + 'toolservers' + SEP + 'gemini-'), `the policy folder is in AIB's own data folder: ${dir}`);
+    const toml = Deno.readTextFileSync(dir + SEP + 'aib-toolservers.toml');
+    assert(toml.includes('toolName = "mcp_github_search"') && toml.includes('decision = "deny"'), toml);
+    assertEquals([...Deno.readDirSync(wslHome)].length, 0, 'nothing was written in the distro home (no ~/.gemini)');
+    // with nothing to switch off a chat gets neither flag
+    await aib.$toolServersCall({ op: 'set', path: REF, server: 'rea', on: true });
+    await aib.$toolServersCall({ op: 'set', path: REF, server: 'github', tool: 'search', toolOn: true });
+    assertEquals((await step('gemini'))!.args, []);
+  },
+});
+
+Deno.test({
+  name: "tool servers in WSL: Qwen gets a settings file in the distro (server excluded, tool off as a full copy) merged over the distro's system settings",
+  ...T,
+  async fn() {
+    await using lab = new WslLab();
+    const { data, wslHome, aib, step } = gqLab(lab);
+    const system = lab.dir + SEP + 'system-settings.json'; // stands in for the distro's /etc/qwen-code/settings.json
+    Deno.writeTextFileSync(system, JSON.stringify({ theme: 'dark', mcp: { excluded: ['old'] } }));
+    const before = Deno.readTextFileSync(system);
+    await aib.$toolServersCall({ op: 'set', path: REF, server: 'rea', on: false });
+    await aib.$toolServersCall({ op: 'set', path: REF, server: 'github', tool: 'search', toolOn: false });
+    const out = (await step('qwen', { env: { QWEN_CODE_SYSTEM_SETTINGS_PATH: system } }))!;
+    assertEquals(out.skipped, []);
+    const file = out.env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+    assert(file.startsWith(data + SEP + 'toolservers' + SEP + 'qwen-'), `the settings file is in AIB's own data folder: ${file}`);
+    const settings = JSON.parse(Deno.readTextFileSync(file)) as Json;
+    assertEquals(settings.theme, 'dark', "the distro's own system settings are kept");
+    assertEquals((settings.mcp as Json).excluded, ['old', 'rea'], 'server off: excluded');
+    assertEquals(((settings.mcpServers as Json).github as Json).excludeTools, ['search'], 'tool off: a full copy with excludeTools');
+    assertEquals(((settings.mcpServers as Json).github as Json).httpUrl, 'https://x.invalid/mcp');
+    assertEquals(Deno.readTextFileSync(system), before, "the distro's own file was not changed");
+    assertEquals([...Deno.readDirSync(wslHome)].length, 0, 'nothing was written in the distro home (no ~/.qwen)');
+    // a chat's own settings file in AIB's folder (its subagent hooks) is the base instead, and is left as it is
+    const own = data + SEP + 'chat-settings.json';
+    Deno.writeTextFileSync(own, JSON.stringify({ hooks: { x: 1 } }));
+    const withOwn = (await step('qwen', {}, { env: { QWEN_CODE_SYSTEM_SETTINGS_PATH: own } }))!;
+    const merged = JSON.parse(Deno.readTextFileSync(withOwn.env.QWEN_CODE_SYSTEM_SETTINGS_PATH)) as Json;
+    assertEquals(merged.hooks, { x: 1 });
+    assertEquals((merged.mcp as Json).excluded, ['rea']);
+    assertEquals(Deno.readTextFileSync(own), JSON.stringify({ hooks: { x: 1 } }));
+  },
+});
+
+Deno.test({
+  name: 'tool servers in WSL: the helper keeps to its own folder, refuses a bad hash, ignores a base outside it, and sweeps old files',
+  ...T,
+  async fn() {
+    const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-ts-write-' }));
+    try {
+      const data = dir + SEP + 'data';
+      const m = makeMethods({ env: () => Promise.resolve({ env: {}, shell: '/bin/sh', home: dir, arch: 'x86_64' }), data });
+      let refused = '';
+      try {
+        await m['toolservers.write']({ agent: 'gemini', hash: '../x', toml: 'a' });
+      } catch (error) {
+        refused = (error as Error).message;
+      }
+      assert(refused.includes('hash'), refused);
+      const root = data + SEP + 'toolservers';
+      Deno.mkdirSync(root + SEP + 'gemini-old', { recursive: true });
+      Deno.writeTextFileSync(root + SEP + 'qwen-old.json', '{}');
+      const old = new Date(Date.now() - 8 * 24 * 3600 * 1000);
+      Deno.utimeSync(root + SEP + 'gemini-old', old, old);
+      Deno.utimeSync(root + SEP + 'qwen-old.json', old, old);
+      Deno.mkdirSync(root + SEP + 'gemini-fresh', { recursive: true });
+      await m['toolservers.write']({ agent: 'gemini', hash: 'abc', toml: '# x' });
+      assertEquals([...Deno.readDirSync(root)].map((e) => e.name).sort(), ['gemini-abc', 'gemini-fresh'], 'the week-old files went, the fresh one stayed');
+      const secret = dir + SEP + 'secret.json';
+      Deno.writeTextFileSync(secret, JSON.stringify({ leaked: true }));
+      const answer = await m['toolservers.write']({ agent: 'qwen', hash: 'q1', fragment: { mcp: { excluded: ['a'] } }, base: secret }) as { path: string };
+      assert(!('leaked' in (JSON.parse(Deno.readTextFileSync(answer.path)) as Json)), 'a base outside the data folder is not read');
+    } finally {
+      Deno.removeSync(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: 'tool servers in WSL: an older helper (no toolservers.write) keeps the old behaviour and the card note',
+  ...T,
+  async fn() {
+    await using lab = new WslLab();
+    const { data, aib, step } = gqLab(lab);
+    (lab.host as unknown as { methods: string[] }).methods = ['toolservers.discover', 'env.get'];
+    await aib.$toolServersCall({ op: 'set', path: REF, server: 'rea', on: false });
+    await aib.$toolServersCall({ op: 'set', path: REF, server: 'github', tool: 'search', toolOn: false });
+    const g = (await step('gemini'))!;
+    assert(!g.args.includes('--admin-policy'), g.args.join(' '));
+    assert(g.args.includes('--allowed-mcp-server-names'), 'the server switch still works');
+    assertEquals(g.skipped.length, 1);
+    const q = (await step('qwen'))!;
+    assertEquals(q.env, {});
+    assertEquals(q.skipped.length, 1);
+    assertEquals([...Deno.readDirSync(data)].length, 0, 'nothing was written');
+    assert(!lab.host.calls.some(([m]) => m === 'toolservers.write'), 'the old helper was not asked');
+    const view = await aib.$toolServersCall({ op: 'view', path: REF }) as unknown as { reach: { agent: string; reach: string; text: string }[] };
+    const card = view.reach.filter((r) => r.agent === 'gemini' || r.agent === 'qwen');
+    assertEquals(card.map((r) => r.reach), ['partial', 'none']);
+    assert(card.every((r) => r.text.includes('helper is updated')), JSON.stringify(card));
   },
 });

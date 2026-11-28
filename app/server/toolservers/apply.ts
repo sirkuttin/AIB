@@ -49,15 +49,18 @@ export const REACH: AgentReach[] = [
   },
 ];
 
-/** The same card for a project in WSL: the files Gemini's policy and Qwen's settings need are written by AIB, which can't write them in the distro yet. */
+/**
+ * The same card for a project in WSL whose distro has an older AIB helper: Gemini's policy and Qwen's settings files are written in the
+ * distro by that helper (`toolservers.write`). With a current helper a WSL project shows the same card as Windows (REACH).
+ */
 export const REACH_WSL: AgentReach[] = REACH.map((r) =>
   r.agent === 'gemini'
-    ? { ...r, reach: 'partial' as Reach, text: "servers; single tools can't be turned off in a WSL project yet" }
+    ? { ...r, reach: 'partial' as Reach, text: "servers; single tools can't be turned off until this distro's AIB helper is updated" }
     : r.agent === 'qwen'
     ? {
       ...r,
       reach: 'none' as Reach,
-      text: "can't follow it in a WSL project yet: its settings file would have to be written in the distro",
+      text: "can't follow it until this distro's AIB helper is updated: its settings file has to be written in the distro",
     }
     : r
 );

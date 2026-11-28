@@ -22,6 +22,8 @@ import type { Effective } from '../toolservers/store.ts';
 import { agentProcesses, attribute } from '../toolservers/measure.ts';
 import * as qwenSub from '../subagents/qwen.ts';
 import { isDict, ValueError } from '../core/py.ts';
+import { wslLoc } from '../wsl/access.ts';
+import { wslWriteToolServers } from '../wsl/toolservers.ts';
 import { log } from './aib_util.ts';
 import type { Aib } from './aib.ts';
 import type { ConnectCtx, ConnectPrepared } from './aib_connect_hooks.ts';
@@ -96,8 +98,12 @@ export const toolServersMethods = {
         out.args = geminiArgs(e, l.found, ['studio_artifact']);
         const toml = geminiPolicyToml(e);
         if (toml) {
-          if (x.wsl) out.skipped.push("single tools (Gemini's policy file can't be written in the distro yet)");
-          else {
+          if (x.wsl) {
+            // the helper writes the rules in AIB's own folder in the distro; a second --admin-policy (the subagent fence's is its own)
+            const dir = x.distro ? await wslWriteToolServers(x.distro, { agent: 'gemini', hash: l.hash, toml }) : null;
+            if (dir) out.args.push('--admin-policy', dir);
+            else out.skipped.push("single tools (this distro's AIB helper can't write Gemini's policy file yet)");
+          } else {
             const have = prepared?.gemini?.policyDir;
             const dir = have || pathOf(this.stateDir, 'toolservers', `gemini-${l.hash}`);
             Deno.mkdirSync(dir, { recursive: true });
@@ -107,8 +113,27 @@ export const toolServersMethods = {
         }
       } else if (agent === 'qwen') {
         const fragment = qwenFragment(e, l.found);
-        if (fragment && x.wsl) out.skipped.push("servers and tools (Qwen's settings file can't be written in the distro yet)");
-        else if (fragment) {
+        if (fragment && x.wsl) {
+          // the helper merges the fragment into the chat's own settings file (or the distro's system settings) and writes a file in AIB's folder
+          const env: Record<string, string> = {};
+          for (const n of ['QWEN_HOME', 'QWEN_CODE_SYSTEM_SETTINGS_PATH']) {
+            const v = x.spawnEnv?.[n] ?? x.env[n];
+            if (v) env[n] = v;
+          }
+          const own = prepared?.env?.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+          const file = x.distro
+            ? await wslWriteToolServers(x.distro, {
+              agent: 'qwen',
+              hash: l.hash,
+              fragment,
+              project: wslLoc(x.workspace)?.linuxPath,
+              env,
+              ...(own ? { base: own } : {}),
+            })
+            : null;
+          if (file) out.env.QWEN_CODE_SYSTEM_SETTINGS_PATH = file;
+          else out.skipped.push("servers and tools (this distro's AIB helper can't write Qwen's settings file yet)");
+        } else if (fragment) {
           const own = prepared?.env?.QWEN_CODE_SYSTEM_SETTINGS_PATH;
           const file = own || pathOf(this.stateDir, 'toolservers', `qwen-${l.hash}.json`);
           let base: Json = {};

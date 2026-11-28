@@ -65,7 +65,10 @@ export class ToolServers {
   readonly store: ToolServersStore;
   readonly #cache = new Map<string, { at: number; found: FoundServer[] }>();
 
-  constructor(stateDir: string, private readonly opts: { wsl?: WslDiscover; servedHash?: (chatId: string) => string | null } = {}) {
+  constructor(
+    stateDir: string,
+    private readonly opts: { wsl?: WslDiscover; wslCanWrite?: (distro: string) => boolean; servedHash?: (chatId: string) => string | null } = {},
+  ) {
     this.store = new ToolServersStore(stateDir);
   }
 
@@ -192,7 +195,7 @@ export class ToolServers {
       wsl,
       servers,
       summary: { procs, mb, allProcs, allMb, estimate },
-      reach: wsl ? REACH_WSL : REACH,
+      reach: wsl && !this.opts.wslCanWrite?.(wslLocOf(path)!.distro) ? REACH_WSL : REACH,
       stale,
       rule: { offLocal: !!choice?.offLocal },
     };

@@ -233,7 +233,7 @@ export function makeMethods(ctx: HelperContext): Handlers {
     ...phaseOne(ctx),
     ...docsMethods(ctx), // the docs' file work in the project's aib-docs/ (helper/docs.ts)
     ...pcsyncMethods(), // sync between PCs: the file work in a project's aib-shared/ and aib-docs/ (helper/pcsync.ts)
-    ...toolServerMethods(ctx), // the MCP servers the distro's agents name in their config files (helper/toolservers.ts, read only)
+    ...toolServerMethods(ctx), // the MCP servers the distro's agents name in their config files (read only) and the chat files Gemini and Qwen need (helper/toolservers.ts)
     ...editorMethods(ctx), // the file editor's reads and atomic saves of a WSL project's files (helper/editor.ts)
     // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
     ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),
