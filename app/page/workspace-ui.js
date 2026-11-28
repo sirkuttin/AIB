@@ -3315,7 +3315,7 @@
   // "New chat" tab; the new chat starts in the project of the tab we were on.
   function noteNewChat(prev) {
     if (!host || !ws) return;
-    const prevPk = nextPk || (prev ? projectKeyOf(prev) : (draft && draft.pk) || '');
+    const prevPk = pinnedProject() || nextPk || (prev ? projectKeyOf(prev) : (draft && draft.pk) || '');
     const from = prev ? keyOf(prev) : draft ? draft.from : '';
     if (blankNext) {
       blankNext = false;
@@ -3455,9 +3455,21 @@
   // the tab we came from. Null for "add project" so the typed folder wins.
   const activeProject = () => {
     if (!ws || (draft && draft.blank)) return null;
-    const pk = draft && draft.pk && draft.pk !== St().ALL ? draft.pk : ws.active !== St().ALL ? ws.active : '';
+    // a project window starts its chats in its own project, whatever chat it shows (a chat of another project left in view
+    // by a restore must not decide it)
+    const pk = pinnedProject() || (draft && draft.pk && draft.pk !== St().ALL ? draft.pk : ws.active !== St().ALL ? ws.active : '');
     const p = pk ? projectOfKey(pk) : null;
     return p ? { key: p.key, name: p.name, path: p.path || '' } : null;
+  };
+
+  // The project this window shows by key, even while the list has no entry (or no path) for it yet: {key, path}; null when the
+  // window has none ("add project", or no project chosen). New chats name this project, so they never land in another one.
+  const activeProjectRef = () => {
+    if (!ws || (draft && draft.blank)) return null;
+    const pk = pinnedProject() || (draft && draft.pk && draft.pk !== St().ALL ? draft.pk : ws.active !== St().ALL ? ws.active : '');
+    if (!pk) return null;
+    const p = projectOfKey(pk);
+    return { key: pk, path: (p && p.path) || '' };
   };
 
   function init(h) {
@@ -3809,6 +3821,9 @@
     // No project at all (a new user): the chat list then says how to add one.
     noProjects: () => !!host && !projects.length,
     activeProject,
+    activeProjectRef,
+    // false: this project window belongs to another project than the chat's (a restore must not open it here)
+    ownsChat: (c) => !pinnedProject() || !c || projectKeyOf(c) === pinnedProject(),
     focusProjectOf,
     selectProject,
     closeTab: closeTabKey,

@@ -10,6 +10,7 @@ import { sessionOp } from '../acp/breadth.ts';
 import { isCodexFamily } from '../agents/claude_family.ts';
 import { isDict, isStr, ValueError } from '../core/py.ts';
 import { wslLoc } from '../wsl/access.ts';
+import { projectKey } from '../desktop/project_delete.ts';
 import { type Json, KeyError, log, need, SWARM_ACTION_LABELS, SWARM_NOTE_ACTIONS, SWARM_NOTE_KINDS } from './aib_util.ts';
 import { LANDING_TTL_MS, readHelperOf, readOwnCopy, readPicks } from './aib_options.ts';
 import type { Aib } from './aib.ts';
@@ -46,6 +47,14 @@ op('connect', true, async function (body) {
   if (typeof continueAnyway !== 'boolean') throw new ValueError('continueAnyway must be a boolean');
   const provider = need(body, 'provider');
   const cwd = need(body, 'cwd');
+  // Second guard: a page that starts a chat in "its" project names that project; a folder of another project is refused, so a
+  // window with a stale or unknown project can never start a chat somewhere else.
+  if (body.project !== undefined && body.project !== null && body.project !== '') {
+    if (!isStr(body.project)) throw new ValueError('project must be text');
+    if (projectKey(cwd) !== body.project) {
+      throw new ValueError(`This chat was asked to start in project ${body.project}, but the folder ${String(cwd)} belongs to another project. Nothing was started.`);
+    }
+  }
   const connection = await this.connect(provider as string, cwd as string, (body.resume ?? null) as string | null, {
     background,
     continueAnyway,

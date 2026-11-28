@@ -3843,6 +3843,7 @@
     return AgentChoice.resolveFolder({
       explicit: newDraft?.cwd,
       activeProject: window.AgentWorkspaceUI?.activeProject?.(),
+      projectKey: window.AgentWorkspaceUI?.activeProjectRef?.()?.key,
       inputValue: $('cwd').value,
       preferInput: !$('setup').hidden,
     });
@@ -3866,6 +3867,7 @@
     const folder = AgentChoice.resolveFolder({
       explicit: o.cwd,
       activeProject: window.AgentWorkspaceUI?.activeProject?.(),
+      projectKey: window.AgentWorkspaceUI?.activeProjectRef?.()?.key,
       inputValue: $('cwd').value,
     }).cwd;
     newDraft = {
@@ -4062,7 +4064,9 @@
     for (const id of ['ncAgent', 'ncModel', 'ncMode']) $(id).disabled = startingNew;
     $('ncFolder').textContent = f.cwd
       ? (window.AIBWsl ? AIBWsl.displayPath(f.cwd) : f.cwd) + (newBranch.cwd === f.cwd && newBranch.branch ? ' · ' + newBranch.branch : '')
-      : 'Add a project folder to start: type one below, or use New project (+ above the chat list).';
+      : f.source === 'pending'
+        ? 'Loading this project’s folder…'
+        : 'Add a project folder to start: type one below, or use New project (+ above the chat list).';
     const typing = f.source === 'none' || f.source === 'input';
     $('ncFolderInput').hidden = !typing;
     $('ncFolderInput').disabled = startingNew;
@@ -4241,7 +4245,7 @@
     $('prompt').disabled = startingNew;
     $('prompt').placeholder = 'Message ' + name + ' to start the chat… Enter to send';
     $('send').hidden = false;
-    $('send').disabled = startingNew || !has || !f.cwd || !!wslMissing(f.cwd, newDraft.provider);
+    $('send').disabled = startingNew || !has || (!f.cwd && f.source !== 'pending') || !!wslMissing(f.cwd, newDraft.provider);
     $('send').textContent = startingNew ? 'Starting…' : 'Send';
     $('cancel').hidden = true;
     if ($('provider').value !== newDraft.provider) $('provider').value = newDraft.provider;
@@ -4329,9 +4333,11 @@
       const f = AgentChoice.resolveFolder({
         explicit: newDraft?.cwd,
         activeProject: window.AgentWorkspaceUI?.activeProject?.(),
+        projectKey: window.AgentWorkspaceUI?.activeProjectRef?.()?.key,
         inputValue: $('cwd').value,
       });
       if (f.cwd) $('cwd').value = f.cwd;
+      else if (f.source === 'pending') $('cwd').value = ''; // never show a folder another window typed
     }
     renderNewChat();
   };
@@ -4347,20 +4353,34 @@
   $('cwd').addEventListener('input', () => {
     if (newDraft && !selected) renderNewChat();
   });
+  const FOLDER_WAIT_MS = 10000;
   async function startNewChat() {
     if (!newDraft || selected || startingNew) return;
-    const f = newChatFolder(),
-      draft = $('prompt').value,
+    let f = newChatFolder();
+    const draft = $('prompt').value,
       provider0 = newDraft.provider,
-      picks = { model: newDraft.model, mode: newDraft.mode, effort: newDraft.effort },
-      pickLists = newChatLists(f.cwd);
-    if (!f.cwd || (!draft.trim() && !selectedAttachments('new-chat').length)) return;
+      picks = { model: newDraft.model, mode: newDraft.mode, effort: newDraft.effort };
+    if ((!f.cwd && f.source !== 'pending') || (!draft.trim() && !selectedAttachments('new-chat').length)) return;
     startingNew = true;
     clearError();
     renderNewChat();
     try {
+      // This window's project is known by name but its folder is not loaded yet (just added, slow server): wait for it. The chat
+      // never starts in another project's folder; after the wait the message is kept and the send is refused with the reason.
+      for (let waited = 0; f.source === 'pending' && waited < (window.__aibTestFolderWaitMs || FOLDER_WAIT_MS); waited += 250) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        f = newChatFolder();
+      }
+      if (!f.cwd) throw Error("This project's folder is not loaded yet, so the chat was not started. Try again in a moment.");
+      const pickLists = newChatLists(f.cwd);
       // The host applies the picks right after the session starts and before it is ready, so the first prompt runs with them.
-      const result = await connectAndWait({ provider: provider0, cwd: f.cwd, resume: '', picks });
+      const result = await connectAndWait({
+        provider: provider0,
+        cwd: f.cwd,
+        resume: '',
+        picks,
+        ...(f.source === 'project' && f.project ? { project: f.project } : {}), // the server refuses a folder of another project
+      });
       if (f.source === 'input')
         try {
           localStorage.setItem('studio-cwd', f.cwd);
@@ -4964,7 +4984,7 @@
         return;
       }
       const prior = conversations.find((c) => c.key === key) || window.AgentWorkspaceUI?.restoreTarget?.();
-      if (prior) {
+      if (prior && window.AgentWorkspaceUI?.ownsChat?.(prior) !== false) {
         window.AgentWorkspaceUI?.keepProjectFor?.(prior); // reopening it keeps the project you had in the sidebar
         await openConversation(prior);
       } else showNewChat();

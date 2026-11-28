@@ -88,6 +88,26 @@ test('folder: active project wins, then typed input, then none', () => {
   );
 });
 
+test('folder: a window whose project folder is not known yet never uses the typed folder (another window may have left it)', () => {
+  // the owner's bug: a new project's window, the list not loaded, the shared folder box holding the other project's folder
+  assert.deepEqual(A.resolveFolder({ activeProject: null, projectKey: 'w:c:/act', inputValue: 'C:\\REPOS\\braveTV' }), {
+    cwd: '',
+    source: 'pending',
+    project: 'w:c:/act',
+  });
+  assert.deepEqual(A.resolveFolder({ projectKey: 'p:wsl:/Ubuntu/home/me/act', inputValue: '/x' }).source, 'pending');
+  // known: the project's own folder, with its key for the server's check (a WSL project keeps its wsl:// path)
+  assert.deepEqual(
+    A.resolveFolder({ activeProject: { path: 'wsl://Ubuntu/home/me/act' }, projectKey: 'p:wsl:/Ubuntu/home/me/act', inputValue: '/x' }),
+    { cwd: 'wsl://Ubuntu/home/me/act', source: 'project', project: 'p:wsl:/Ubuntu/home/me/act' },
+  );
+  // a folder typed on purpose (More options) or a hand-off's folder still wins
+  assert.equal(A.resolveFolder({ projectKey: 'w:c:/act', inputValue: 'D:\\x', preferInput: true }).cwd, 'D:\\x');
+  assert.equal(A.resolveFolder({ projectKey: 'w:c:/act', explicit: 'D:\\old' }).source, 'explicit');
+  // no project on the window ("add project"): the typed folder, as before
+  assert.deepEqual(A.resolveFolder({ projectKey: '', inputValue: 'D:\\x' }), { cwd: 'D:\\x', source: 'input' });
+});
+
 const rows = (n) =>
   Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', value: 'message number ' + i }));
 

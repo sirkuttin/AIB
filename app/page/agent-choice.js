@@ -360,6 +360,7 @@
 
   // The folder a new chat starts in: an explicit one (a hand-off keeps the old chat's folder), a folder typed under
   // "More options" (preferInput), the active project's path, else what is in the folder input, else nothing.
+  // projectKey: the project this window shows; with no path known for it the answer is source 'pending', never the input.
   // source tells the UI whether the user still has to type one.
   function resolveFolder(opts) {
     const o = opts || {},
@@ -368,7 +369,11 @@
     const typed0 = typeof o.inputValue === 'string' ? o.inputValue.trim() : '';
     if (o.preferInput && typed0) return { cwd: typed0, source: 'input' };
     const project = o.activeProject && typeof o.activeProject.path === 'string' ? o.activeProject.path.trim() : '';
-    if (project) return { cwd: project, source: 'project' };
+    const projectKey = typeof o.projectKey === 'string' ? o.projectKey.trim() : '';
+    if (project) return projectKey ? { cwd: project, source: 'project', project: projectKey } : { cwd: project, source: 'project' };
+    // The window belongs to a project whose folder the page does not know yet (just added, the list is still loading): the
+    // folder box (a value another window typed, shared through localStorage) is never used for it. The send waits for the path.
+    if (projectKey) return { cwd: '', source: 'pending', project: projectKey };
     const typed = typeof o.inputValue === 'string' ? o.inputValue.trim() : '';
     if (typed) return { cwd: typed, source: 'input' };
     return { cwd: '', source: 'none' };
