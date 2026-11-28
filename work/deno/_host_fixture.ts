@@ -237,9 +237,9 @@ export class Fixture {
    * pinPort: the command line must name the port (deploy finds a server by its `--port N` and restarts it there). The OS picks that
    * number too, and should another process take it before the server binds it, it is started again on a new one: never a failure.
    */
-  async startWeb(extra: string[] = [], options: { wait?: boolean; env?: Record<string, string>; pinPort?: boolean } = {}): Promise<Web> {
+  async startWeb(extra: string[] = [], options: { wait?: boolean; env?: Record<string, string>; pinPort?: boolean; port?: number } = {}): Promise<Web> {
     for (let attempt = 1;; attempt++) {
-      const port = options.pinPort ? refusedPort() : 0;
+      const port = options.port ?? (options.pinPort ? refusedPort() : 0);
       const [child, log] = this.spawn(
         [DENO, 'run', '-A', '--quiet', MAIN, 'serve', '--port', String(port), ...this.agentFlags(), '--host-idle-minutes', '0', ...extra],
         'web',

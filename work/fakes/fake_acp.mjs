@@ -1077,7 +1077,7 @@ print("hello")
       else if (args.setup_question && !setupAnswer) pendingSetup = [key, method, params];
       else if (args.setup_fail) emit({ id: key, error: { code: -32000, message: 'Fixture setup failure' } });
       else {
-        sessionName = 'sessionId' in params ? params.sessionId : (args.new_session || fakeSession);
+        sessionName = 'sessionId' in params ? params.sessionId : (args.new_session || (env.AIB_FAKE_UNIQUE_SESSION === '1' ? 'fake-' + Math.random().toString(36).slice(2, 10) : fakeSession));
         sessionCwd = params.cwd || sessionCwd;
         lastMcp = params.mcpServers;
         if (mcpPids && method === 'session/new') startMcpServers(lastMcp);
