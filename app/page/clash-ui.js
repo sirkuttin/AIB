@@ -88,7 +88,9 @@
         paint(null);
         if (project) {
           refresh();
-          timer = win.setInterval(refresh, 6000);
+          timer = win.setInterval(() => {
+            if (!(win.document && win.document.hidden)) refresh(); // a hidden window does not ask
+          }, 6000);
         }
       },
       refresh,

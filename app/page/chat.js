@@ -829,11 +829,27 @@
       second: '2-digit',
     });
   }
+  /* Conditional polls: the answers of these GETs carry an ETag (server/web/server.ts). The page sends it back as If-None-Match; a 304
+     answer has no body and the page uses the last one it kept (parsed again, so no caller shares an object with another). */
+  const etagCache = new Map(); // url -> { etag, text }
+  const CONDITIONAL = /^\/api\/(sessions|commands|agents|live\/(docs\/list|files\/list|wsl\/status|project\/changes|list|swarm|ownership))\?|^\/api\/(sessions|commands|agents)$/;
   async function request(url, options = {}, timeout = 15000) {
     const controller = new AbortController(),
-      timer = setTimeout(() => controller.abort(), timeout);
+      timer = setTimeout(() => controller.abort(), timeout),
+      conditional = (options.method || 'GET') === 'GET' && CONDITIONAL.test(url),
+      kept = conditional ? etagCache.get(url) : null;
     try {
+      if (kept) options = { ...options, headers: { ...options.headers, 'If-None-Match': kept.etag } };
       const response = await fetch(url, { ...options, signal: controller.signal });
+      if (response.status === 304 && kept) return { ok: true, status: 200, body: JSON.parse(kept.text) };
+      const etag = conditional && response.ok ? response.headers.get('ETag') : null;
+      if (etag) {
+        const text = await response.text();
+        etagCache.delete(url);
+        etagCache.set(url, { etag, text });
+        while (etagCache.size > 120) etagCache.delete(etagCache.keys().next().value);
+        return { ok: response.ok, status: response.status, body: JSON.parse(text) };
+      }
       const body = await response.json();
       return { ok: response.ok, status: response.status, body };
     } catch (error) {
@@ -864,10 +880,38 @@
      server/host/aib.ts, 20 s) plus the body of a long chat (6,000 events can be 45 MB): a GET that would have answered never shows
      "Request timed out". Bootstrap keeps 15 s (it never waits on chats). */
   const GET_TIMEOUT_MS = 30000;
+  /* A browser holds 6 connections per server. Polls that are slow (a busy AIB) must never fill them: a send (POST) would then wait for a
+     free one and time out. At most GET_SLOTS GETs run at once; the others wait their turn. POSTs never wait here. Two asks of one
+     poll URL at the same time share one request (the same URL is the same question). */
+  const GET_SLOTS = 5;
+  let getRunning = 0;
+  const getWaiting = [];
+  const getFlight = new Map(); // url -> Promise of the response, for the CONDITIONAL polls
+  async function slot(run) {
+    if (getRunning >= GET_SLOTS) await new Promise((resolve) => getWaiting.push(resolve));
+    getRunning++;
+    try {
+      return await run();
+    } finally {
+      getRunning--;
+      const next = getWaiting.shift();
+      if (next) next();
+    }
+  }
   async function get(path, params = {}) {
     const open = path === '/api/live/bootstrap',
       url = path + '?' + new URLSearchParams(params),
-      send = () => request(url, { headers: open ? pageAuth() : { 'X-Studio-Token': token } }, open ? 15000 : GET_TIMEOUT_MS);
+      send = () => {
+        if (open) return request(url, { headers: pageAuth() }, 15000);
+        const run = () => slot(() => request(url, { headers: { 'X-Studio-Token': token } }, GET_TIMEOUT_MS));
+        if (!CONDITIONAL.test(url)) return run();
+        let flight = getFlight.get(url);
+        if (!flight) {
+          flight = run().finally(() => getFlight.delete(url));
+          getFlight.set(url, flight);
+        }
+        return flight.then((r) => ({ ...r, body: structuredClone(r.body) })); // each caller its own copy
+      };
     if (!open && !token) await refreshToken();
     let response = await send();
     if (response.status === 403 && !open) {
@@ -4960,9 +5004,24 @@
     refresh({ poll: true });
   });
   // tests only: window.__aibTestListScale (or the poll scale) divides the conversation list's 5 s poll; 1 in the app
-  setInterval(() => listConversations().catch(fail), 5000 / Math.max(TEST_POLL_SCALE, Number(window.__aibTestListScale) || 1));
+  // (a hidden window does not list: it reads at once when it shows again; another AIB window's slow pace applies to the list too)
+  let listTickAt = 0;
+  setInterval(() => {
+    if (document.hidden) return;
+    const every = pollEvery(5000, 10000) / (TEST_POLL_SCALE > 1 ? 1 : Math.max(1, Number(window.__aibTestListScale) || 1));
+    if (Date.now() - listTickAt < every - 100) return;
+    listTickAt = Date.now();
+    listConversations().catch(fail);
+  }, POLL_TICK_MS);
   document.addEventListener?.('visibilitychange', () => {
-    if (!document.hidden) refresh();
+    if (document.hidden) return;
+    refresh();
+    if (Date.now() - listTickAt > 2000) {
+      listTickAt = Date.now();
+      listConversations().catch(fail);
+    }
+    projActAt = 0;
+    mirrorsAt = 0;
   });
 
   $('prompt').addEventListener('input', () => {
@@ -5935,7 +5994,7 @@
   let mirrorBusy = false;
   async function tickMirrors() {
     const S = window.AgentSplitUI;
-    if (!S || !S.active() || mirrorBusy) return;
+    if (!S || !S.active() || mirrorBusy || document.hidden) return;
     mirrorBusy = true;
     try {
       for (const t of S.mirrorTargets()) {
@@ -6359,7 +6418,12 @@
     }
   }
   const IDLE_READS = 3; // idle chats read per tick
-  const IDLE_REREAD_MS = 10000; // an idle chat on screen is re-read at most this often when nothing signalled a change
+  /* An idle chat on screen is re-read at most this often when nothing signalled a change. Every signal (its list row's file time, a turn
+     ending or starting, its helpers changing in the swarm list) re-reads it at once, so this is only the backstop: at 10 s, 40 idle chats
+     cost 3 requests (transcript, agents, commands) a second for nothing (perf_polls_test.ts). */
+  const IDLE_REREAD_MS = 60000 / TEST_POLL_SCALE;
+  /* A working chat that is not the open one is read for Activity at this pace; the open chat is read every tick. */
+  const WORKING_REREAD_MS = 4000;
   /* What the swarm list says about the helpers and subagents of chat `key`: changes when one is added, ends or is renamed. */
   function helperSigOf(key) {
     const out = [];
@@ -6542,6 +6606,17 @@
         rows = withHelpers(key, a?.rows || []),
         n = rows.length,
         open = n > 0 && idleOpen(projAct.pk, key);
+      /* Draw a chat's head and body only when what they show changed: every tick used to rewrite all of them (40 idle chats were 1,300 DOM
+         changes a second, 11% of a core in an idle window; perf_polls_test.ts). A open body also shows ages, so it is redrawn every 30 s. */
+      const side0 = S?.paneSide ? S.paneSide(key) : '';
+      const sig = [conv ? titleOf(conv) : 'Conversation', conv ? nameOf(conv.provider) : '', n, open, side0, key === focus, key === subOwner ? subSelection?.key : '']
+        .concat(open ? [JSON.stringify(rows), Math.floor(nowS / 30)] : [])
+        .join('\u0001');
+      if (sec.sig === sig && sec.root.isConnected) {
+        want.push(sec.root);
+        continue;
+      }
+      sec.sig = sig;
       // owner decision: no needs-you styling in Activity. Every idle chat gets the same neutral hollow dot (never the sidebar's amber one)
       const d = (sec.dot ||= text('i', '', 'status-dot st-idle sp-dot sp-idle-dot'));
       sec.name.textContent = conv ? titleOf(conv) : 'Conversation';
@@ -6593,7 +6668,7 @@
     return group;
   }
   async function tickProjectActivity() {
-    if (projAct.busy) return;
+    if (projAct.busy || document.hidden) return; // a hidden window reads nothing; visibilitychange reads at once
     projAct.busy = true;
     try {
       if (!swarm.at || Date.now() - swarm.at > pollEvery(1500, 5000) - 100) await loadSwarmHelpers();
@@ -6617,9 +6692,13 @@
       due.sort((x, y) => Number(idleOpen(projAct.pk, y)) - Number(idleOpen(projAct.pk, x)));
       keys.push(...due.slice(0, IDLE_READS));
       projAct.idleLeft = due.length > IDLE_READS;
+      const open = selected ? aliasKey(selected) : '';
       for (const key of keys) {
         const c = conversations.find((x) => aliasKey(x) === key);
         if (!c) continue;
+        // a working chat that is not the open one: read at WORKING_REREAD_MS, not every tick (32 working chats were 20 reads a second)
+        const was = paneAct.get(key);
+        if (key !== open && was?.at && now - was.at < WORKING_REREAD_MS / TEST_POLL_SCALE && key !== subOwner) continue;
         try {
           await loadPaneActivity(c);
         } catch {}

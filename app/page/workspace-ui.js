@@ -43,6 +43,7 @@
   function pullInbox(force) {
     if (!host || !host.getJson || srvPulling) return;
     if (!force && Date.now() - srvPulledAt < SRV_PULL_MS) return;
+    if (!force && typeof document !== 'undefined' && document.hidden) return; // a hidden window does not ask
     srvPulling = true;
     srvPulledAt = Date.now();
     Promise.resolve(host.getJson('/api/live/inbox', srvInbox && !force ? { since: srvInbox.version } : force ? { fresh: 1 } : {})).then(

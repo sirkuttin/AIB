@@ -19,8 +19,16 @@
   let host = null,
     status = { available: false, distros: [], openRequests: [] },
     loaded = false,
-    polling = false;
+    polling = false,
+    waiting = false; // the poll paused because the window is hidden
   const listeners = [];
+  if (root.document && root.document.addEventListener)
+    root.document.addEventListener('visibilitychange', () => {
+      if (!root.document.hidden && waiting) {
+        waiting = false;
+        refresh();
+      }
+    });
 
   /** {key, linuxPath} of a ref, or null for a Windows path. */
   function parse(ref) {
@@ -120,6 +128,8 @@
     polling = true;
     root.setTimeout(() => {
       polling = false;
+      // a hidden window does not ask; it asks again the moment it shows (visibilitychange below)
+      if (root.document && root.document.hidden) return void (waiting = true);
       refresh();
     }, POLL_MS);
   }
