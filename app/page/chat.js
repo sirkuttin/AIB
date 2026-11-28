@@ -799,6 +799,17 @@
     )
       .replace(/\s+/g, ' ')
       .slice(0, 170);
+  // What Settings > Tool servers (toolservers-ui.js) asks of this page: the open chats of a project (the apply line names them) and a
+  // redraw of the chips when the numbers changed.
+  window.AIBToolServersHost = {
+    openChats: (path) => {
+      const key = AgentChoice.projectKey(path);
+      return conversations
+        .filter((c) => c.live && !c.live.closed && key && AgentChoice.projectKey(c.live.projectRoot || c.live.cwd || c.cwd) === key)
+        .map((c) => ({ id: c.live.id, title: titleOf(c) }));
+    },
+    redraw: () => renderHeader(),
+  };
   function since(t) {
     const n = Math.max(0, Math.floor(Date.now() / 1000 - t));
     return n < 60
@@ -1611,6 +1622,8 @@
         limits: connected ? snapshot.limits : null,
         branch: gone ? '' : window.AgentHeaderUI?.branchOf(selected.cwd, renderHeader) || '',
         cwd: selected.cwd,
+        // Tools N of M (toolservers-ui.js): the project's tool servers; read once, then the chip redraws
+        tools: gone ? null : window.AIBToolServersUI?.chipFor(selected.projectRoot || selected.cwd, { post }, renderHeader) || null,
         agent: nameOf(selected.provider),
         agentId: selected.provider,
         account: selected.account || '',
@@ -1625,6 +1638,7 @@
         onMode: (modeId) => post('mode', { id: current, modeId }),
         onConfig: (configId, value, type) => post('config', { id: current, configId, value, type }),
         onCancelPending: (key) => post('cancel-pending', { id: current, key }),
+        onTools: () => window.AIBToolServersUI?.openFor(selected.projectRoot || selected.cwd),
         onInsertText: (text) => {
           const box = $('prompt');
           box.value = text;

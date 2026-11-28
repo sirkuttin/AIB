@@ -168,13 +168,17 @@ export const connectMethods = {
         launchCommand: command,
       };
       const prepared = x.prepared = (await hook.prepare?.call(this, x)) ?? null;
+      // a project that is new gets the New projects list as its own before its first chat reads it (toolservers/store.ts seedProject)
+      if (!resume && this.toolServers && this.addedProjects && !this.addedProjects.shows(workspace)) this.toolServers.seedIfNew(workspace, false);
+      const toolLaunch = await this.$toolServersStep(x, prepared); // the project's tool server list for this agent (host/aib_toolservers.ts)
       const connectionOptions: ConnectionOptions = {};
-      const agentEnv = { ...env, ...prepared?.env };
+      const agentEnv = { ...env, ...prepared?.env, ...toolLaunch?.env };
       if (Object.keys(agentEnv).length) connectionOptions.env = agentEnv;
       if (prepared?.id) connectionOptions.id = prepared.id;
       if (chatId) connectionOptions.id = chatId;
       // the agent's own launch change: its flag in the command's place (Maki, Copilot), or arguments added (Gemini, a WSL Antigravity chat)
-      const launchCommand = prepared?.command ?? (prepared?.args?.length ? [...command, ...prepared.args] : command);
+      const preparedCommand = prepared?.command ?? (prepared?.args?.length ? [...command, ...prepared.args] : command);
+      const launchCommand = toolLaunch?.args.length ? [...preparedCommand, ...toolLaunch.args] : preparedCommand;
       x.launchCommand = launchCommand;
       if (launch) {
         connectionOptions.keeper = launch.link; // the distro's Linux keeper, whatever the Windows keeper's state
@@ -200,6 +204,7 @@ export const connectMethods = {
         c.projectRoot = plan ? workspace : String(record!.project); // cwd is the worktree, projectRoot the project
       }
       this.$wire(c);
+      this.$toolServersAttach(c, toolLaunch);
       c.sessionLease = lease;
       if (asHelper) c.swarm = { role: 'helper', helperId: asHelper.helperId, parent: asHelper.parent };
       else if (known) c.swarm = { role: 'helper', helperId: known.id, parent: known.parent.live };
@@ -275,6 +280,7 @@ export const connectMethods = {
           void this.limits.refresh(c); // chat opened: Codex / Vibe limits (at most once a minute per account)
           if (this.recovery) this.recovery.connectionReady(c);
           this.announce(c, 'ready');
+          this.$toolServersMeasure(c); // a while later: what its servers really cost (kept for Settings)
           this.handoff.refresh(); // its Claude config folder is watched from now on (open elsewhere)
           if (this.liveSync && !wsl) {
             try {

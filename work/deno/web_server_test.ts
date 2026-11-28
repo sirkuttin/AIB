@@ -34,6 +34,7 @@ Deno.test('the route table is exactly the frozen list (paths, scopes and kinds)'
     'POST /api/live/terminal/end',
     'POST /api/live/view-prefs',
     'POST /api/live/agent-options',
+    'POST /api/live/tool-servers', // per-project tool servers: Settings > Tool servers
     'POST /api/live/model-servers/check', // model servers: ask a server for its models
     'GET /api/live/model-servers', // model servers: the list with each one's health
     'POST /api/live/desktop/notify',

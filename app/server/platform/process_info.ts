@@ -83,6 +83,21 @@ export function processStrings(pid: number): { commandLine: string | null; cwd: 
   }
 }
 
+/** The process's working set in KB (what Task Manager calls Memory), or null when it can't be read. Windows only. */
+export function processWorkingSetKb(pid: number): number | null {
+  const k = kernel32();
+  const handle = k.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+  if (handle === null) return null;
+  try {
+    const counters = new Uint8Array(72); // PROCESS_MEMORY_COUNTERS (x64): cb, PageFaultCount, PeakWorkingSetSize, WorkingSetSize, ...
+    new DataView(counters.buffer).setUint32(0, 72, true);
+    if (!k.K32GetProcessMemoryInfo(handle, counters, 72)) return null;
+    return Math.round(Number(new DataView(counters.buffer).getBigUint64(16, true)) / 1024);
+  } finally {
+    k.CloseHandle(handle);
+  }
+}
+
 /** The most of an environment block read (real ones are a few KB). */
 const ENV_LIMIT = 1 << 20;
 

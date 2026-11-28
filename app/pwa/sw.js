@@ -58,7 +58,7 @@
     '/delete-project-ui.js', '/workspace-ui.js', '/split-tree.js', '/split-ui.js', '/doc-icons.js', '/files-state.js',
     '/file-editor-ui.js', '/files-ui.js',
     '/doc-links.js', '/subagents-ui.js', '/activity-ui.js', '/clash-ui.js', '/changes-ui.js', '/artifacts-ui.js', '/docs-tab-ui.js', '/clamp-ui.js',
-    '/header-ui.js', '/send-menu-ui.js', '/queue-ui.js', '/updates-ui.js', '/devices-ui.js', '/pcsync-ui.js', '/allow-rules-ui.js', '/settings-ui.js',
+    '/header-ui.js', '/send-menu-ui.js', '/queue-ui.js', '/updates-ui.js', '/devices-ui.js', '/pcsync-ui.js', '/allow-rules-ui.js', '/toolservers-ui.js', '/settings-ui.js',
     '/wsl-settings-ui.js', '/start-page-ui.js', '/plan-ui.js', '/views.js', '/views-ui.js', '/focus-return.js',
     '/scroll-controller.js', '/chat-cache.js', '/chat.js', '/elicitation-ui.js', '/docs.css', '/doc-ui.js', '/doc-toolbar.js',
     '/doc-panels.js', '/doc.html', '/remote-loader.html', '/vendor/xterm/xterm.js', '/vendor/xterm/addon-fit.js',

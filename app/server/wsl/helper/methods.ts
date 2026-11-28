@@ -43,6 +43,7 @@ import { aibMethods, type RemoveDeps } from './aib_remove.ts';
 import { localOnlyMethods, rawRead } from './local_only.ts';
 import { allowFactsMethods } from './allow_facts.ts';
 import { editorMethods } from './editor.ts';
+import { toolServerMethods } from './toolservers.ts';
 import { GEMINI_TRUST_FILE, trustFolders } from '../../agents/gemini_trust.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
@@ -232,6 +233,7 @@ export function makeMethods(ctx: HelperContext): Handlers {
     ...phaseOne(ctx),
     ...docsMethods(ctx), // the docs' file work in the project's aib-docs/ (helper/docs.ts)
     ...pcsyncMethods(), // sync between PCs: the file work in a project's aib-shared/ and aib-docs/ (helper/pcsync.ts)
+    ...toolServerMethods(ctx), // the MCP servers the distro's agents name in their config files (helper/toolservers.ts, read only)
     ...editorMethods(ctx), // the file editor's reads and atomic saves of a WSL project's files (helper/editor.ts)
     // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
     ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),

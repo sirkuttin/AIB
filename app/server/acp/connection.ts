@@ -13,6 +13,7 @@ import { houseRules } from '../allow/brief.ts';
 import { LinuxFacts } from '../allow/linux.ts';
 import { createHash } from 'node:crypto';
 import { codexUsable, withCodexMcp } from './codex_mcp.ts';
+import { type ClaudePatch, mergeClaudeSettings, withCodexToolServers } from '../toolservers/apply.ts';
 import { ClientCaps } from './client_caps.ts';
 import { type BreadthState, type McpServer, newState, publicState, sessionCapabilities } from './breadth.ts';
 import { arraySource, type Ev, type EventSource } from './event_pages.ts';
@@ -153,6 +154,14 @@ export class Connection {
     /** Antigravity (subagents/antigravity.ts) with hooks on: its --gemini-dir (agy keeps its subagent worktrees under <dir>/antigravity-cli/worktrees). */
     agyDir?: string;
   } | null = null;
+
+  /**
+   * The project's tool server list this chat was launched with (toolservers/*, host/aib_toolservers.ts): the part that rides on the
+   * session (Claude's settings patch) or on the environment (Codex's partial `mcp_servers` entries). Null: nothing is switched off.
+   */
+  toolServers: { claude: ClaudePatch | null; codex: Record<string, Record<string, unknown>> | null; copilot: string[] } | null = null;
+  /** A tool of an MCP server was called in this chat (the tool list's "seen" names, toolservers/store.ts). */
+  onToolSeen: ((server: string, tool: string) => void) | null = null;
 
   /**
    * Antigravity (subagents/antigravity.ts): the rule its subagents are asked to follow (their own workspace). It can only be asked
@@ -643,7 +652,7 @@ export class Connection {
       this.#codexConfigRefused = true;
       return env;
     }
-    return { ...env, CODEX_CONFIG: merged };
+    return { ...env, CODEX_CONFIG: withCodexToolServers(merged, this.toolServers?.codex) };
   }
 
   /**
@@ -1013,7 +1022,7 @@ export class Connection {
    * hookSettings: the command hooks; never written to ~/.claude), or {}. The same object on every session/new and session/load.
    */
   claudeMeta(): Json {
-    const settings = this.subagentHooks?.settings ?? this.subagentHooks?.deny;
+    const settings = mergeClaudeSettings(this.subagentHooks?.settings ?? this.subagentHooks?.deny ?? null, this.toolServers?.claude ?? null);
     return settings ? { _meta: { claudeCode: { options: { settings: structuredClone(settings) } } } } : {};
   }
 

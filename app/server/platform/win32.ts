@@ -10,6 +10,7 @@ const kernel32Symbols = {
   OpenProcess: { parameters: ['u32', 'i32', 'u32'], result: 'pointer' },
   GetExitCodeProcess: { parameters: ['pointer', 'buffer'], result: 'i32' },
   GetProcessTimes: { parameters: ['pointer', 'buffer', 'buffer', 'buffer', 'buffer'], result: 'i32' },
+  K32GetProcessMemoryInfo: { parameters: ['pointer', 'buffer', 'u32'], result: 'i32' },
   ReadProcessMemory: { parameters: ['pointer', 'u64', 'buffer', 'usize', 'buffer'], result: 'i32' },
   CreateToolhelp32Snapshot: { parameters: ['u32', 'u32'], result: 'pointer' },
   Process32FirstW: { parameters: ['pointer', 'buffer'], result: 'i32' },

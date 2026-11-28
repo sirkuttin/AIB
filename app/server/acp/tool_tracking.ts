@@ -80,6 +80,21 @@ export function mcpOf(raw: unknown): ToolSeen['mcp'] {
 }
 
 /**
+ * The MCP server and tool a tool call names (not AIB's own server), from what each agent says: Claude Code's `mcp__<server>__<tool>`,
+ * Codex's rawInput {server, tool}, Copilot's `<server>-<tool>` title, Gemini's "<tool> (<server> MCP Server)" title. The tool list of
+ * Settings > Tool servers is built from these ("tool names a chat saw"). Null: not an MCP call.
+ */
+export function mcpToolOf(toolName: string, mcp: ToolSeen['mcp'], title: string): { server: string; tool: string } | null {
+  const own = (server: string) => server === 'studio_artifact' || server === 'studio-artifact';
+  const claude = /^mcp__(.+?)__(.+)$/.exec(toolName);
+  if (claude) return own(claude[1]) ? null : { server: claude[1], tool: claude[2] };
+  if (mcp && mcp.server && mcp.tool) return own(mcp.server) ? null : { server: mcp.server, tool: mcp.tool };
+  const gemini = /^(\S+) \((.+) MCP Server\)$/.exec(title.trim());
+  if (gemini) return own(gemini[2]) ? null : { server: gemini[2], tool: gemini[1] };
+  return null;
+}
+
+/**
  * GitHub Copilot CLI (1.0.109, run against a stub model): its tool_call for an MCP tool is titled `<server>-<tool>`, kind other, and
  * rawInput is the arguments themselves; its permission request carries only the tool's own name as title. So AIB's tool is known from
  * the tool_call, the way Codex's is (ToolSeen.mcp). Only AIB's own server (agents/copilot_mcp.ts); any other tool: null.

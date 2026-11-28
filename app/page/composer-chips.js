@@ -304,6 +304,15 @@
           (v) => choiceName(effortOption, v),
         );
     for (const c of [modelChip, modeChip, effortChip]) if (c) chips.push(c);
+    // Tools N of M: the tool servers this project's chats load (toolservers-ui.js); a click opens Settings > Tool servers on this project
+    if (model.tools && Number(model.tools.total) > 0)
+      chips.push({
+        id: 'tools',
+        label: 'Tools',
+        value: model.tools.on + ' of ' + model.tools.total,
+        title: "Tool servers this project's chats load (opens Settings \u2192 Tool servers)",
+        action: 'tools',
+      });
     // Read-only stand-ins the caller adds (the New chat page while it asks the agent for its lists): {id, label, value, title}.
     for (const x of Array.isArray(model.extraChips) ? model.extraChips : [])
       if (x && typeof x.id === 'string' && !chips.some((c) => c.id === x.id))
@@ -745,7 +754,7 @@
         continue;
       }
       const wrap = el(doc, 'span', null, 'chip-wrap');
-      const interactive = !!chip.subset && !!root.AgentConfigUI;
+      const interactive = (!!chip.subset && !!root.AgentConfigUI) || chip.action === 'tools';
       const button = el(
         doc,
         interactive ? 'button' : 'span',
@@ -831,6 +840,7 @@
       }
       if (interactive)
         button.addEventListener('click', () => {
+          if (chip.action === 'tools') return o.onTools && o.onTools();
           if (menu.node && menu.trigger === button) return closeMenu(true);
           const rows = menuItems(chip.subset);
           const shown = chip.pending ? chip.pending.value : rows.current;

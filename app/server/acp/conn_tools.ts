@@ -10,6 +10,7 @@ import { clip, isDict, isStr, pyStrip } from '../core/py.ts';
 import { log, type Json, get, now } from './conn_util.ts';
 import {
   mcpOf,
+  mcpToolOf,
   copilotMcpOf,
   CLAUDE_SUBAGENT_TOOLS,
   backgroundTask,
@@ -265,6 +266,14 @@ export const toolMethods = {
         echo: !main || isStr(parent) ? toolEcho(update) : null,
       };
       this.$tools.set(id, seen);
+      if (this.onToolSeen && !this.$replaying) {
+        const t = mcpToolOf(isStr(toolName) ? toolName : '', seen.mcp, seen.title ?? '');
+        if (t) {
+          try {
+            this.onToolSeen(t.server, t.tool);
+          } catch { /* a note about tool names never fails a chat */ }
+        }
+      }
       while (this.$tools.size > 300) this.$tools.delete(this.$tools.keys().next().value!);
       if (shell) {
         if (!this.$shellCalls.has(id)) this.$shellCalls.set(id, seen.since);

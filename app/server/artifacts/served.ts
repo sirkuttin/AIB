@@ -26,6 +26,10 @@ export interface Served {
   prompt?: { hash: string; base?: string; at: number };
   /** The last automatic restart of this chat to pick up new AIB tools: at most one try per app version. */
   restart?: { app: string; at: number; ok: boolean; error?: string };
+  /** The last restart to load a changed tool server list: one try per list (its hash), so a failing one never loops and a new change tries again. */
+  serversRestart?: { hash: string; at: number; ok: boolean; error?: string };
+  /** The project's tool server list this chat was launched with (toolservers/store.ts): hash and what was off. */
+  toolServers?: { hash: string; off: string[]; tools: Record<string, string[]>; at: number };
   app: string;
 }
 
@@ -81,7 +85,7 @@ export class ServedRecord {
     const all = this.#load();
     const cutoff = this.clock() - KEEP_MS;
     for (const [id, v] of Object.entries(all)) {
-      if (Math.max(v.tools?.at ?? 0, v.prompt?.at ?? 0, v.restart?.at ?? 0) < cutoff) delete all[id];
+      if (Math.max(v.tools?.at ?? 0, v.prompt?.at ?? 0, v.restart?.at ?? 0, v.toolServers?.at ?? 0, v.serversRestart?.at ?? 0) < cutoff) delete all[id];
     }
     try {
       saveJson(this.#path, all, '.served-tools-');
@@ -119,9 +123,32 @@ export class ServedRecord {
     this.#save();
   }
 
+  /** The chat was launched with this tool server list (a new launch, a restart: the list its agent really got). */
+  toolServers(id: string, hash: string, off: string[], tools: Record<string, string[]>): void {
+    this.#refresh();
+    const all = this.#load();
+    const entry = all[id] ?? (all[id] = { app: this.app });
+    if (entry.toolServers?.hash === hash) return;
+    entry.toolServers = { hash, off: [...off], tools: structuredClone(tools), at: this.clock() };
+    this.#save();
+  }
+
   /** True when this app version already tried to restart the chat (it succeeded or not): never tried twice, so never a loop. */
   restartTried(id: string): boolean {
     return this.get(id)?.restart?.app === this.app;
+  }
+
+  /** True when a restart to load this tool server list (its hash) was already tried for the chat. */
+  serversRestartTried(id: string, hash: string): boolean {
+    return this.get(id)?.serversRestart?.hash === hash;
+  }
+
+  serversRestartNoted(id: string, hash: string, ok: boolean, error?: string): void {
+    this.#refresh();
+    const all = this.#load();
+    const entry = all[id] ?? (all[id] = { app: this.app });
+    entry.serversRestart = { hash, at: this.clock(), ok, ...(error ? { error: error.slice(0, 300) } : {}) };
+    this.#save();
   }
 
   /** Note a restart attempt (written before it starts, so a crash in it counts as the one try). */
@@ -138,6 +165,8 @@ export class ServedRecord {
 export interface ServedNow {
   tools: string[] | null;
   promptBase: string | null;
+  /** The hash of the project's tool server list now (toolservers/store.ts effectiveHash); null: not known. */
+  toolServers?: string | null;
 }
 
 /**
@@ -153,5 +182,7 @@ export function staleReasons(served: Served | null, now: ServedNow, adopted: boo
     } else if (adopted && !served) why.push('tools (no record: it started before AIB kept one)');
   }
   if (now.promptBase && served?.prompt?.base && served.prompt.base !== now.promptBase) why.push('prompt');
+  // a chat launched before this feature has no record of its list: not known, so not stale
+  if (now.toolServers && served?.toolServers && served.toolServers.hash !== now.toolServers) why.push('servers');
   return why;
 }

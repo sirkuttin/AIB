@@ -448,6 +448,8 @@ export interface HelperMethods {
    * The processes below each root pid (platform/descendants.ts run natively, /proc): busy-children detection of WSL chats (a background
    * shell still runs). Rows are [pid, parentPid, depth, age in seconds (to 0.01 s; whole seconds from an older helper) or null]; a root whose processes cannot be listed is null.
    */
+  /** The MCP servers the distro's agents name in their own config files, for a project folder (toolservers/discover.ts FoundServer[]); read only. */
+  'toolservers.discover': { params: { folder: string }; result: { servers: Record<string, unknown>[] } };
   'proc.tree': { params: { roots: number[] }; result: { trees: Record<string, [number, number, number, number | null][] | null> } };
   /**
    * Stop on a WSL chat's background command (platform/kill_verified.ts run natively): `targets` are [pid, age in seconds] of the

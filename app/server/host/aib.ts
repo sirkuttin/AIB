@@ -104,6 +104,10 @@ import { codexSetupMethods, type CodexSetupMethods } from './aib_setup_codex.ts'
 import { qwenSetupMethods, type QwenSetupMethods } from './aib_setup_qwen.ts';
 import { agySetupMethods, type AgySetupMethods } from './aib_setup_agy.ts';
 import { copilotSetupMethods, type CopilotSetupMethods } from './aib_setup_copilot.ts';
+import { toolServersMethods, type ToolServersMethods } from './aib_toolservers.ts';
+import { ToolServers } from '../toolservers/service.ts';
+import { wslDiscoverServers } from '../wsl/toolservers.ts';
+import { describeChange } from '../toolservers/store.ts';
 import { keeperMethods, type KeeperMethods } from './aib_keeper.ts';
 import { connectMethods, type ConnectMethods } from './aib_connect.ts';
 import { wslMethods, type WslMethods } from './aib_wsl.ts';
@@ -130,6 +134,8 @@ export class Aib {
   readonly stateDir: string;
   /** The projects the user added (desktop/added_projects.ts): a chat opened here adds its folder. */
   readonly addedProjects: AddedProjects | null;
+  /** Per-project tool servers (toolservers/*): the project's choice and what each agent's launch gets of it. Null without a state folder. */
+  readonly toolServers: ToolServers | null;
   /** Allow rules (server/allow): one gate for every chat of this host; null without a state folder. */
   readonly allow: AllowGate | null;
   readonly hasStateDir: boolean;
@@ -247,6 +253,9 @@ export class Aib {
     // Recovery state is kept only when a state directory was configured explicitly.
     this.store = this.hasStateDir ? new StateStore(this.stateDir, `recovery-${name}`) : null;
     this.addedProjects = this.hasStateDir ? new AddedProjects(this.stateDir) : null;
+    this.toolServers = this.hasStateDir
+      ? new ToolServers(this.stateDir, { wsl: wslDiscoverServers, servedHash: (id) => this.served?.get(id)?.toolServers?.hash ?? null })
+      : null;
     this.allow = this.hasStateDir ? new AllowGate(this.stateDir) : null;
     // AIB's own lines (turn ends, notes) kept by conversation, so a chat rebuilt under another id shows them (history/lines.ts)
     this.conversationLines = this.hasStateDir ? new ConversationLines(join(this.stateDir, 'conversation-lines')) : null;
@@ -1046,7 +1055,8 @@ export class Aib {
     if (!this.options.noArtifactTool && !this.$closed) this.artifactMcpHttp(); // its entries count as AIB's own only once this AIB serves them
     const own = (c.mcpServers ?? []).some(isOwnArtifactEntry);
     const tools = own ? toolSignatures({ restricted: !!c.wsl, worktree: !!c.worktree, main: this.$isMain(c) }) : null;
-    return staleReasons(this.served.get(c.id), { tools, promptBase: own ? c.promptBase() || null : null }, c.adopted);
+    const toolServers = this.toolServers?.hashFor(c.projectRoot || c.cwd) ?? null;
+    return staleReasons(this.served.get(c.id), { tools, promptBase: own ? c.promptBase() || null : null, toolServers }, c.adopted);
   }
 
   /**
@@ -1056,39 +1066,55 @@ export class Aib {
   async restartIfStale(c: Connection, moment: 'scan' | 'before-send' = 'scan'): Promise<boolean> {
     if (!this.served || this.$closed || this.#restarting.has(c.id)) return false;
     const why = this.staleWhy(c);
-    if (!why.length || this.served.restartTried(c.id) || c.restartBlocker()) return false;
+    // a changed tool server list is tried once per list (a new change tries again); the other reasons once per app version
+    const serversOnly = why.length > 0 && why.every((w) => w === 'servers');
+    const serversHash = this.toolServers?.hashFor(c.projectRoot || c.cwd) ?? '';
+    if (!why.length || (serversOnly ? this.served.serversRestartTried(c.id, serversHash) : this.served.restartTried(c.id)) || c.restartBlocker()) return false;
     if (!c.canReloadSession()) {
       log.info('stale chat %s (%s) cannot be restarted: its agent does not advertise session load or resume', c.id, why.join(', '));
       return false;
     }
     this.#restarting.add(c.id);
     try {
-      return await this.#restartChat(c, why, moment);
+      return await this.#restartChat(c, why, moment, serversHash);
     } finally {
       this.#restarting.delete(c.id);
     }
   }
 
   /** The existing Continue path: end the agent, then reopen the same conversation as the same chat (id, keys, helper links, history). */
-  async #restartChat(c: Connection, why: string[], moment: string): Promise<boolean> {
+  async #restartChat(c: Connection, why: string[], moment: string, serversHash = ''): Promise<boolean> {
     const { provider, sessionId, cwd } = c;
     if (!sessionId) return false;
     const saved = c.queue.toSaved();
     log.info('chat %s is stale (%s): restarting it (%s)', c.id, why.join(', '), moment);
-    this.served!.restartNoted(c.id, false); // the one try of this app version, written first
+    const serversOnly = why.every((w) => w === 'servers');
+    // what the restart will say: the tool server change in words ("rea off"), from what the chat was launched with to the list now
+    let serversNote = '';
+    if (why.includes('servers') && this.toolServers) {
+      const before = this.served!.get(c.id)?.toolServers ?? null;
+      const now = (await this.toolServers.launch(c.projectRoot || cwd)).effective;
+      const change = describeChange(before ? { off: before.off, tools: before.tools } : null, now);
+      serversNote = `Restarted to load this project's tool servers${change ? ': ' + change : ''}`;
+    }
+    const note = serversOnly ? serversNote : serversNote ? `${Aib.RESTARTED_NOTE}; ${serversNote.charAt(0).toLowerCase()}${serversNote.slice(1)}` : Aib.RESTARTED_NOTE;
+    if (serversOnly) this.served!.serversRestartNoted(c.id, serversHash, false); // the one try of this list, written first
+    else this.served!.restartNoted(c.id, false); // the one try of this app version, written first
     c.keepRecordOnClose = true; // an ended agent, not an ended chat: its recovery entry and queue stay
     try {
       await c.close();
       const next = await this.connect(provider, cwd, sessionId, { continueAnyway: true, auto: true });
       if (saved.length) await next.queueContinue(saved); // goes on as it was: not paused
-      next.recordedEvent('studio_note', { message: Aib.RESTARTED_NOTE, sessionId: next.sessionId });
-      this.served!.restartNoted(next.id, true);
+      next.recordedEvent('studio_note', { message: note, sessionId: next.sessionId });
+      if (serversOnly) this.served!.serversRestartNoted(next.id, serversHash, true);
+      else this.served!.restartNoted(next.id, true);
       return true;
     } catch (error) {
       const message = errorText(error);
       log.warning('restarting stale chat %s failed: %s', c.id, message);
-      this.served!.restartNoted(c.id, false, message);
-      c.error = `Couldn't restart to pick up new AIB tools: ${message}`;
+      if (serversOnly) this.served!.serversRestartNoted(c.id, serversHash, false, message);
+      else this.served!.restartNoted(c.id, false, message);
+      c.error = `Couldn't restart to pick up ${serversOnly ? "this project's tool servers" : 'new AIB tools'}: ${message}`;
       this.reconnectFailures.set(pairKey(provider, sessionId), { provider, sessionId, cwd, error: c.error.slice(0, 500), at: Date.now() / 1000 });
       return false;
     }
@@ -1311,8 +1337,8 @@ export class Aib {
 }
 
 // Methods moved to their own modules (no change): the interface gives Aib their types, installMethods their code.
-export interface Aib extends ClaudeSetupMethods, GeminiSetupMethods, CodexSetupMethods, QwenSetupMethods, AgySetupMethods, CopilotSetupMethods, KeeperMethods, ConnectMethods, WslMethods, LaunchMethods, CallMethods, ViewMethods, ReconnectMethods, WorktreeMethods {}
-installMethods(Aib, claudeSetupMethods, geminiSetupMethods, codexSetupMethods, qwenSetupMethods, agySetupMethods, copilotSetupMethods, keeperMethods, connectMethods, wslMethods, launchMethods, callMethods, viewMethods, reconnectMethods, worktreeMethods);
+export interface Aib extends ToolServersMethods, ClaudeSetupMethods, GeminiSetupMethods, CodexSetupMethods, QwenSetupMethods, AgySetupMethods, CopilotSetupMethods, KeeperMethods, ConnectMethods, WslMethods, LaunchMethods, CallMethods, ViewMethods, ReconnectMethods, WorktreeMethods {}
+installMethods(Aib, toolServersMethods, claudeSetupMethods, geminiSetupMethods, codexSetupMethods, qwenSetupMethods, agySetupMethods, copilotSetupMethods, keeperMethods, connectMethods, wslMethods, launchMethods, callMethods, viewMethods, reconnectMethods, worktreeMethods);
 
 // Moved out (no change); re-exported so every importer of this file keeps working.
 export { ARTIFACT_URL_FILE, CLOSED_GRACE_SECONDS, MAX_CLOSED_CONNECTIONS, STOPPED_HELPER_DAYS, RECONNECT_TRIES, ADOPT_WAIT_MS, KeyError, need, wslAgentOffLine, isRequestError, pythonErrorType } from './aib_util.ts';

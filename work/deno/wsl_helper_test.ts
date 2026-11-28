@@ -515,6 +515,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'localOnly.exclude',
     'localOnly.backup',
     'allow.facts',
+    'toolservers.discover',
   ];
   assertEquals(Object.keys(methods).sort(), [...names].sort());
 });

@@ -137,6 +137,7 @@ export function liveRoutes(): Map<string, LiveHandler> {
   });
   // Deno only (routes.ts DENO_ONLY): the model / mode / effort lists a new chat can offer, before its session exists.
   routes.set('POST /api/live/agent-options', (ctx, _url, body) => ctx.host.liveCall('agent-options', body ?? {}));
+  routes.set('POST /api/live/tool-servers', (ctx, _url, body) => ctx.host.liveCall('tool-servers', body ?? {})); // Settings > Tool servers (toolservers/*)
   // Allow rules (routes.ts DENO_ONLY): the page's Always choice and Settings; the host's #allowCall.
   for (const op of ['answer', 'rules', 'remove', 'restore', 'review', 'enable', 'builtin']) {
     routes.set(`POST /api/live/allow/${op}`, async (ctx, _url, body) => {

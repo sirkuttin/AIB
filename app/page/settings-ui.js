@@ -17,6 +17,7 @@
     { id: 'wsl', label: 'AIB Linking (WSL)', windowsOnly: true }, // drawn by wsl-settings-ui.js; only when AIB runs on Windows
     { id: 'servers', label: 'Model servers' }, // addresses agents talk to: a local model server, a gateway
     { id: 'defaults', label: 'Defaults' },
+    { id: 'tools', label: 'Tool servers' }, // which MCP servers and tools a project's chats load (toolservers-ui.js)
     { id: 'notifications', label: 'Notifications' },
     { id: 'devices', label: 'Remote control' }, // id kept: old links to #devices still open it
     { id: 'sync', label: 'Sync' }, // sync between your PCs, pairing (pcsync-ui.js)
@@ -175,6 +176,27 @@
       section: 'defaults',
       label: 'Defaults per project',
       keywords: ['project', 'folder', 'agent', 'model', 'mode', 'remember', 'last used'],
+    },
+    {
+      id: 'tool-servers',
+      section: 'tools',
+      label: 'Tool servers: which MCP servers and tools a project loads',
+      keywords: [
+        'mcp',
+        'server',
+        'tool',
+        'tools',
+        'memory',
+        'rea',
+        'connector',
+        'claude.ai',
+        'project',
+        'processes',
+        'turn off',
+        'restart',
+        'new projects',
+        'agents follow',
+      ],
     },
     {
       id: 'notifications',
@@ -383,7 +405,7 @@
     return !s.windowsOnly || windowsHost();
   };
   // Entries that draw their own cards (several, with group headings) instead of going into one card with a title.
-  const OWN_CARDS = new Set(['wsl-linking', 'this-computer']);
+  const OWN_CARDS = new Set(['wsl-linking', 'this-computer', 'tool-servers']);
   // Page headings that differ from the short name in the section list.
   const PAGE_HEADINGS = {};
   const pageHeadingRemote = (id) => (remote() && id === 'appearance' ? 'Appearance on this computer' : '');
@@ -2801,6 +2823,8 @@
     'default-agent': renderDefaultAgent,
     'default-picks': renderDefaultPicks,
     'default-projects': renderDefaultProjects,
+    'tool-servers': (box) =>
+      root.AIBToolServersUI ? root.AIBToolServersUI.render(box, S.host) : box.append(note('This part could not be drawn: toolservers-ui.js is missing.', 'bad')),
     notifications: renderNotifications,
     'devices-access': (box) => renderDevices('access', box),
     'devices-phones': (box) => renderDevices('phones', box),

@@ -5,7 +5,7 @@
 import { assertTestAuth, testCredentialEnv } from './test_auth_guard.ts';
 import { TESTS_DIR } from '../core/app.ts';
 import { pyRepr } from '../core/py.ts';
-import { SEP, RuntimeError } from './conn_util.ts';
+import { RuntimeError, SEP } from './conn_util.ts';
 
 // ---- the test guard -----------------------------------------------------------------------------------------------------------
 
@@ -87,6 +87,11 @@ export function testHomeEnv(command: string[]): Record<string, string> {
   if (Deno.env.get('AGENT_STUDIO_TEST') !== '1' || isFixture(command)) {
     return {};
   }
+  if (testHome === null && Deno.env.get('AGENT_STUDIO_TEST_HOME')) {
+    // a test that wants to put files in the throwaway home (the user's agent config AIB reads, toolservers/discover.ts) names it
+    testHome = Deno.env.get('AGENT_STUDIO_TEST_HOME')!;
+    Deno.mkdirSync(testHome, { recursive: true });
+  }
   if (testHome === null) {
     const folder = Deno.makeTempDirSync({ prefix: 'agent-studio-test-home-' });
     testHome = folder;
@@ -112,7 +117,12 @@ export function testHomeEnv(command: string[]): Record<string, string> {
  * sign-in (acp/test_auth_guard.ts; incident 2026-11-25). `env`: what the process will see beyond this process's own environment.
  * Throws before the process exists. Checked at every launch path (direct, keeper, WSL) and for the Codex limits probe.
  */
-export function guardRealAgentAuth(provider: string, command: string[], env: Record<string, string>, base: Record<string, string> = Deno.env.toObject()): void {
+export function guardRealAgentAuth(
+  provider: string,
+  command: string[],
+  env: Record<string, string>,
+  base: Record<string, string> = Deno.env.toObject(),
+): void {
   if (Deno.env.get('AGENT_STUDIO_TEST') !== '1' || isFixture(command) || inTestFixtureRoot(command)) return;
   assertTestAuth(provider, command, { ...base, ...env });
 }

@@ -174,6 +174,7 @@ op('worktree-archive', true, async function (body) { return [200, await this.wor
 
 // ---- internal calls (post: false): host and web-server code only; no page route reaches them --------------------------------
 op('agent-options', false, async function (body) { return [200, await this.agentOptionsFor(body)]; }); // POST /api/live/agent-options (web/live_routes.ts, its own route)
+op('tool-servers', false, async function (body) { return [200, await this.$toolServersCall(body)]; }); // POST /api/live/tool-servers (web/live_routes.ts, its own route)
 op('agent-title', false, function (body) { // web/server.ts chat-name, remote rename
   const queued = this.agentTitles.request(String(need(body, 'provider')), String(need(body, 'sessionId')), String(body.title ?? ''), isStr(body.cwd) ? body.cwd : '');
   return [200, { ok: true, queued }];

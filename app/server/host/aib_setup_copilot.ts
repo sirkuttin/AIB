@@ -29,6 +29,7 @@ export const copilotSetupMethods = {
         ? (await readyHost(distro).call('mcpconfig.write', { id: c.id, json: text })).path
         : copilotMcp.writeConfigFile(copilotMcp.configFileOf(this.stateDir, c.id), text);
       const next = copilotMcp.copilotMcpCommand(c.command, file);
+      if (next && c.toolServers?.copilot.length) next.push(...c.toolServers.copilot); // the project's tool server list (flags, toolservers/apply.ts)
       if (!next) return ''; // not a command with --acp (not the Copilot program AIB knows): left as it is
       c.useCommand(next);
       return '';
