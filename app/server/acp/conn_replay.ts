@@ -62,6 +62,7 @@ export const replayMethods = {
       ...(h.deny ? { deny: h.deny } : {}), // the editing-subagent deny rules a reopen must send again
       ...(h.prompt ? { prompt: h.prompt } : {}),
       ...(h.shellTag ? { shellTag: true } : {}),
+      ...(h.sharedRule ? { sharedRule: true } : {}),
       ...(h.agyDir ? { agyDir: h.agyDir } : {}),
     };
   },

@@ -802,7 +802,7 @@ export async function forwarderOf(binary: string | null, dataDir: string): Promi
  */
 export async function hookForwarderOf(binary: string | null, dataDir: string): Promise<string | null> {
   const program = binary ?? await keeperBinary(dataDir);
-  return /^hook [12345]\b/.test(await checkLine(program, 'hook')) ? program : null; // hook 5 (agy-* events), 4 (qwen-* events), 3 (kill-by-name refusal) and 2 do everything hook 1 does, and more
+  return /^hook [123456]\b/.test(await checkLine(program, 'hook')) ? program : null; // hook 6 (a prompt grown by the shared-folder rule), 5 (agy-* events), 4 (qwen-* events), 3 (kill-by-name refusal) and 2 do everything hook 1 does, and more
 }
 
 /**
@@ -820,6 +820,14 @@ export function hookForwarderKnowsQwen(program: string): boolean {
  */
 export function hookForwarderKnowsAgy(program: string): boolean {
   return hookForwarderVersion(program) >= 5;
+}
+
+/**
+ * True when this forwarder knows hook 6: an Agent call's prompt may grow by AIB's fixed aib-shared rule (keeper/hookforward.go
+ * sharedRuleSuffix). An older program refuses the changed prompt, so AIB leaves it alone for one (it just won't append).
+ */
+export function hookForwarderAppendsSharedRule(program: string): boolean {
+  return hookForwarderVersion(program) >= 6;
 }
 
 /** The `hook` version a forwarder program answered (`hook <n>`): 0 when it was not asked, or answers nothing AIB knows. */

@@ -6,7 +6,7 @@ import { Connection, errorText } from '../acp/connection.ts';
 import { isClaudeFamily } from '../agents/claude_family.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { FORWARD_FILE } from '../artifacts/mcp_http.ts';
-import { hookForwarderOf, hookForwarderTagsShells, keyForForwarder } from '../keeper/client.ts';
+import { hookForwarderAppendsSharedRule, hookForwarderOf, hookForwarderTagsShells, keyForForwarder } from '../keeper/client.ts';
 import { deny as denyHook, type HookAnswer } from '../subagents/service.ts';
 import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
 import { pyStrip } from '../core/py.ts';
@@ -73,6 +73,7 @@ export const claudeSetupMethods = {
         return { hooks: { ...offHooks(HOOKS_OFF, setup.hooksOff), configDir, deny: subagentsOffSettings(project, agentEnv, setup.readOnly) } };
       }
       const shellTag = hookForwarderTagsShells(forwarder); // hook 2: a subagent's shell calls get AIB's cookie prefix (subagents/shell_tag.ts)
+      const sharedRule = hookForwarderAppendsSharedRule(forwarder); // hook 6: the aib-shared rule is appended to Agent prompts
       const settings = hookSettings(forwarder, join(this.stateDir, FORWARD_FILE), { worktreeCreate: !setup.userWorktreeHook, shellTag });
       if (!settings) return { hooks: offHooks("AIB's folder can't be named in a hook command") };
       this.artifactMcpHttp(); // listening, with its address published, before the agent's first hook
@@ -82,7 +83,7 @@ export const claudeSetupMethods = {
       return {
         id,
         env: { AIB_HOOK_KEY: keyForForwarder(forwarder, 'hook-key', key), AIB_HOOK_CHAT: id, AIB_HOOK_READONLY: setup.readOnly.join(',') },
-        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir, ...(shellTag ? { shellTag } : {}) },
+        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir, ...(shellTag ? { shellTag } : {}), ...(sharedRule ? { sharedRule } : {}) },
       };
     } catch (error) {
       log.exception(error, 'Could not set up subagent hooks; the chat runs without them');
@@ -128,6 +129,7 @@ export const claudeSetupMethods = {
       }
       // hook 2: a subagent's shell calls get AIB's cookie, and the distro's helper shuts down what they left (a helper of this build)
       const shellTag = host.hookShellTag === true;
+      const sharedRule = host.hookSharedRule === true; // a helper of this build: its keeper is hook 6
       const settings = hookSettings(tunnel.forwarder, tunnel.socket, { worktreeCreate: !setup.userWorktreeHook, viaSocket: true, shellTag });
       if (!settings) return unavailable("the keeper's folder in the distro can't be named in a hook command");
       const id = chatId ?? crypto.randomUUID().replaceAll('-', '');
@@ -136,7 +138,7 @@ export const claudeSetupMethods = {
       return {
         id,
         env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, AIB_HOOK_READONLY: setup.readOnly.join(',') }, // a Linux process: nothing is sealed or crosses interop
-        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir: setup.configDir, ...(shellTag ? { shellTag } : {}) },
+        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir: setup.configDir, ...(shellTag ? { shellTag } : {}), ...(sharedRule ? { sharedRule } : {}) },
       };
     } catch (error) {
       log.exception(error, 'Could not set up subagent hooks in the distro; the chat\'s subagents are off');

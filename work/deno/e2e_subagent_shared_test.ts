@@ -163,6 +163,11 @@ Deno.test({
     );
     assert((stubText(stub) + sent).includes("PARENT-DONE"));
     const shared = join(project, "aib-shared");
+    // AIB's hook (hook 6) put the rule in the builder's own prompt: the model's request for the subagent carries it after the parent's text
+    assert(
+      sent.includes("SUBTASK-A: write the report\\n\\nAIB: aib-shared/ is shared and not part of your copy."),
+      "the subagent's received prompt carries the aib-shared rule",
+    );
     // a link, no copy: the shell write is in the main folder's real aib-shared/ at once (the worktree is the builder's, its link is not a copy)
     assertEquals(read(join(shared, "bash.txt"))?.trim(), "from-bash", "a shell write through the link");
     assertEquals(read(join(shared, "seed.txt")), "seed\nmore\n", "an existing shared file changed by a shell write");

@@ -31,6 +31,7 @@ import { WslHelperError } from '../../app/server/wsl/contract.ts';
 import { subagentMethods } from '../../app/server/wsl/helper/subagents.ts';
 import { Swarm } from '../../app/server/swarm/service.ts';
 import { readSubagents } from '../../app/server/subagents/service.ts';
+import { SHARED_RULE_SUFFIX } from '../../app/server/subagents/claude_config.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -603,6 +604,40 @@ Deno.test({
     assertEquals(JSON.parse((await hook('pre-shell', call(null, 'npm run dev'))).body), {});
     // the shell hook is on every call's latency path: it never reads the records back
     assertEquals(aib.subagents!.ofChat(c.id).length, 0);
+  },
+});
+
+Deno.test({
+  name:
+    "wsl subagent hooks: a helper of the hook 6 build makes AIB append the aib-shared rule to a builder's prompt (only with an aib-shared folder); an older helper leaves the prompt alone",
+  ...T,
+  async fn() {
+    await keeperBinary();
+    const promptOf = async (lab: Lab) => {
+      const { c, hook } = await openChat(lab);
+      const pre = await hook('pre-tool', agentCall('toolu_sr'));
+      assertEquals([pre.tunnel, pre.status, pre.proofOk], [200, 200, true]);
+      return { c, prompt: JSON.parse(pre.body).hookSpecificOutput.updatedInput.prompt as string };
+    };
+    { // older helper (no subagent.sharedrule): the prompt is untouched even with an aib-shared folder
+      await using lab = new Lab();
+      Deno.mkdirSync(lab.work + SEP + 'aib-shared');
+      const { c, prompt } = await promptOf(lab);
+      assertEquals(c.subagentHooks!.sharedRule, undefined);
+      assertEquals(prompt, 'do it');
+    }
+    { // hook 6 helper, a project without aib-shared: untouched
+      await using lab = new Lab();
+      lab.host.hookSharedRule = true;
+      const { c, prompt } = await promptOf(lab);
+      assertEquals(c.subagentHooks!.sharedRule, true);
+      assertEquals(prompt, 'do it');
+    }
+    await using lab = new Lab();
+    lab.host.hookSharedRule = true;
+    Deno.mkdirSync(lab.work + SEP + 'aib-shared');
+    const { prompt } = await promptOf(lab);
+    assertEquals(prompt, 'do it' + SHARED_RULE_SUFFIX);
   },
 });
 

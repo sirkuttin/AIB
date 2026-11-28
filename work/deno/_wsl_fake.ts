@@ -143,6 +143,8 @@ export class FakeWslHost implements WslHost {
   hookTunnel: { forwarder: string; socket: string } | null = null;
   /** The helper of this build (it has subagent.reaps): its keeper knows hook 2, so a subagent's shell calls are tagged. */
   hookShellTag = false;
+  /** The helper of this build (it has subagent.sharedrule): its keeper is hook 6, so Agent prompts get the aib-shared rule. */
+  hookSharedRule = false;
   #mcp = new Set<(request: { rid: string; headers: Record<string, string>; body: string }) => void>();
 
   onMcpRequest(handler: (request: { rid: string; headers: Record<string, string>; body: string }) => void): () => void {

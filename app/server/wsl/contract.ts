@@ -47,6 +47,8 @@ export interface WslHost {
    * knows hook 2's `pre-shell`). False for an older helper: the chat's shell calls stay untagged.
    */
   readonly hookShellTag?: boolean;
+  /** True for a helper whose keeper knows hook 6 (it has `subagent.sharedrule`): AIB appends the aib-shared rule to Agent prompts. */
+  readonly hookSharedRule?: boolean;
   /** Called for each tool call an agent in the distro sends through the tunnel (HelperMcpRequest), once, never for a replayed one. */
   onMcpRequest?(handler: (request: HelperMcpRequest['params']) => void): () => void;
 }
@@ -350,6 +352,8 @@ export interface HelperMethods {
   'subagent.event': { params: { chat: WslSubagentChat; op: string; args?: Record<string, unknown> }; result: { ok: boolean } };
   'subagent.folderBranch': { params: { id: string }; result: { branch: string } };
   /** What the helper shut down (subagents/reap.ts, run natively over the distro's /proc), oldest first, at most 100. Its presence = shell tagging. */
+  /** Presence only: the helper's keeper knows hook 6 (the aib-shared rule appended to Agent prompts). */
+  'subagent.sharedrule': { params: Record<string, never>; result: Record<string, never> };
   'subagent.reaps': { params: Record<string, never>; result: { reaps: WslReap[] } };
   /** Which of these background calls (tool_use_ids) of a chat have no tagged process left in the distro (Activity's "ended (process gone)"). */
   /** How many of the chat's finished subagents still have processes of their own in the distro (the chat reads Working meanwhile). */
@@ -579,6 +583,8 @@ export interface WslSubagentChat {
   agyDir?: string;
   /** The distro's keeper forwards hook 2's `pre-shell`: this chat's subagent shell calls are tagged (subagents/shell_tag.ts). */
   shellTag?: boolean;
+  /** The distro's keeper is hook 6: AIB appends the aib-shared rule to this chat's Agent prompts. */
+  sharedRule?: boolean;
 }
 
 /** What the distro's helper shut down for a finished subagent or a stopped call (helper/subagents.ts 'subagent.reaps'). */

@@ -34,7 +34,7 @@ import { normcase, realpath, SEP } from '../platform/ospath.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { pathFormProblem } from '../allow/paths.ts';
 import { readHelpers } from '../swarm/registry.ts';
-import { claudeConfigDir, isForkSkill } from './claude_config.ts';
+import { claudeConfigDir, isForkSkill, SHARED_RULE_SUFFIX } from './claude_config.ts';
 import { callTimeOf, preShell } from './shell_tag.ts';
 import { type ProcessReaper, recordReaped } from './reap.ts';
 import { OWN_WORK, ownWorkReason, ownWorkStuck } from './own_work.ts';
@@ -175,7 +175,7 @@ export interface SubagentChat {
   /** The project folder (worktrees go under <root>/<its repo hash>/, with the project's other copies). */
   project: string;
   /** Hooks were given to this chat: on, its read-only types, and whether the user's WorktreeCreate hook makes the worktrees. */
-  hooks: { readOnly: Set<string>; userWorktreeHook: boolean; configDir?: string; shellTag?: boolean } | null;
+  hooks: { readOnly: Set<string>; userWorktreeHook: boolean; configDir?: string; shellTag?: boolean; sharedRule?: boolean } | null;
   /**
    * Where this chat's subagent worktrees go when not <root>/<repo hash>/: a Gemini chat's own <root>/<repo hash>/.gem-<chat> folder,
    * the one folder its agent was given with --include-directories (subagents/gemini.ts); a Codex chat's .cx-<chat>, a writable root
@@ -220,6 +220,17 @@ export const TEXTS = {
 /** Read-only types the chat listed: no worktree (the forwarder decides these too, AIB up or not). No isolation value is exempt. */
 function passesUnchanged(input: Record<string, unknown>, readOnly: Set<string>): boolean {
   return typeof input.subagent_type === 'string' && readOnly.has(input.subagent_type);
+}
+
+/**
+ * The Agent call's own input, its prompt grown by the aib-shared rule (SHARED_RULE_SUFFIX): only for a chat given a hook 6 forwarder
+ * (hooks.sharedRule: an older one refuses a changed prompt), a project with an aib-shared folder, and a call that has a text prompt.
+ * Builders get aib-shared/ as a link the Write and Edit tools refuse, so the rule must reach them in their own brief.
+ */
+export function sharedRuled(chat: SubagentChat, input: Record<string, unknown>): Record<string, unknown> {
+  if (!chat.hooks?.sharedRule || typeof input.prompt !== 'string' || input.prompt.endsWith(SHARED_RULE_SUFFIX)) return input;
+  if (!wt.lexists(`${chat.project}${SEP}aib-shared`)) return input;
+  return { ...input, prompt: input.prompt + SHARED_RULE_SUFFIX };
 }
 
 /** The file read fresh. Never throws. */
@@ -631,7 +642,7 @@ export class SubagentWorktrees {
       description: typeof input.description === 'string' ? input.description.slice(0, 300) : '',
       background: input.run_in_background === true,
     };
-    const isolated = json({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, isolation: 'worktree' } } });
+    const isolated = json({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...sharedRuled(chat, input), isolation: 'worktree' } } });
     if (chat.hooks!.userWorktreeHook) {
       // the user's hook makes the worktree (P0 A6): AIB only records the call, to adopt the result (P2); capped like AIB's own
       const id = this.#newId();

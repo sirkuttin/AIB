@@ -148,6 +148,8 @@ export class Connection {
      * (subagents/shell_tag.ts). Absent: an older forwarder, which would refuse the answer, or a chat taken over from an older note: untagged.
      */
     shellTag?: boolean;
+    /** Given a forwarder that answers `hook 6`: AIB appends the aib-shared rule to its Agent calls' prompts (claude_config.ts SHARED_RULE_SUFFIX). */
+    sharedRule?: boolean;
     /** Antigravity (subagents/antigravity.ts) with hooks on: its --gemini-dir (agy keeps its subagent worktrees under <dir>/antigravity-cli/worktrees). */
     agyDir?: string;
   } | null = null;

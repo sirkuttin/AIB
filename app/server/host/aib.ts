@@ -782,7 +782,7 @@ export class Aib {
         lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : '',
         folder: c.cwd,
         project: c.projectRoot || c.cwd,
-        hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}), ...(h.shellTag ? { shellTag: true } : {}) } : null,
+        hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}), ...(h.shellTag ? { shellTag: true } : {}), ...(h.sharedRule ? { sharedRule: true } : {}) } : null,
         wsl: { distro: c.wsl.distro },
         ...(isCodexFamily(c.provider) && on && h.subFolder ? { subFolder: h.subFolder } : {}),
         ...(isAntigravity(c.provider) && on && h.agyDir ? { agyDir: h.agyDir } : {}),
@@ -806,7 +806,7 @@ export class Aib {
       lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : '',
       folder: c.cwd,
       project,
-      hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}), ...(h.shellTag ? { shellTag: true } : {}) } : null,
+      hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}), ...(h.shellTag ? { shellTag: true } : {}), ...(h.sharedRule ? { sharedRule: true } : {}) } : null,
       ...(subFolder ? { subFolder } : {}),
       ...(isAntigravity(c.provider) && on && h.agyDir ? { agyDir: h.agyDir } : {}),
     };

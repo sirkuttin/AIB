@@ -345,8 +345,16 @@ export function hookSettings(forwarder: string, addressFile: string, options: { 
 /** The system prompt line for a chat whose subagents get their own worktree (design 2.5). */
 export const SUBAGENT_PROMPT = 'Subagents that edit files work in their own git worktree. AIB merges their changes into this folder when ' +
   'the subagent finishes, and tells you which files changed; do not merge, cherry-pick or copy files from a subagent\'s worktree yourself. ' +
-  'aib-shared/ is shared and not part of a subagent\'s copy: it reads it normally; to save a file there it must write it with a shell command ' +
-  '(e.g. a heredoc to aib-shared/<name>), because the Write and Edit tools refuse it. Put that in the brief of every subagent you start.';
+  'aib-shared/ is shared and not part of a subagent\'s copy; AIB adds the rule for saving files there (a shell command, not Write or Edit) ' +
+  'to every subagent\'s brief itself.';
+
+/**
+ * The paragraph AIB's PreToolUse hook appends to an Agent call's prompt when the project has an aib-shared folder (hook 6). The
+ * keeper's forwarder accepts exactly this text after the call's own prompt (keeper/hookforward.go sharedRuleSuffix: keep them equal;
+ * a test compares them).
+ */
+export const SHARED_RULE_SUFFIX = '\n\nAIB: aib-shared/ is shared and not part of your copy. Read it normally. To save a file there, write it with a shell command ' +
+  '(for example a heredoc to aib-shared/<name>), because the Write and Edit tools refuse it.';
 
 /**
  * The chat line for a typed `/name` that runs as a forked subagent (connection.ts forkSkillRefusal): typed by the user, a fork skill

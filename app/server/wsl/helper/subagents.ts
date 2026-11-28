@@ -79,6 +79,7 @@ function chatOf(raw: unknown): SubagentChat {
       userWorktreeHook: raw.userWorktreeHook === true,
       ...(configDir ? { configDir } : {}),
       ...(raw.shellTag === true ? { shellTag: true } : {}),
+      ...(raw.sharedRule === true ? { sharedRule: true } : {}),
     },
   };
   return chat;
@@ -396,6 +397,7 @@ export function subagentMethods(data: string): Handlers {
     },
 
     /** What this helper shut down (a finished subagent's processes, a stopped call's), oldest first. */
+    'subagent.sharedrule': () => ({}), // present = this helper's keeper is hook 6 (AIB reads the method list)
     'subagent.reaps': () => ({ reaps: reaps.map((r) => ({ ...r })) }),
 
     /** The chat closed: its spare and unused prepared worktrees go; bound ones stay for landing. */

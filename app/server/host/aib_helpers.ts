@@ -104,6 +104,7 @@ export function hooksFromNote(raw: unknown): Connection['subagentHooks'] {
     ...(text(raw.prompt, 2000) ? { prompt: text(raw.prompt, 2000) } : {}), // Codex: the system prompt line a reopen sends again
     ...(isDict(raw.deny) ? { deny: raw.deny as Json } : {}),
     ...(text(raw.agyDir, 1024) ? { agyDir: text(raw.agyDir, 1024) } : {}), // Antigravity: its --gemini-dir (a taken-over chat's hooks still answer)
+    ...(raw.sharedRule === true ? { sharedRule: true } : {}), // given a hook 6 forwarder: its Agent calls get the aib-shared rule appended
     ...(raw.shellTag === true ? { shellTag: true } : {}), // given a hook 2 forwarder: its subagents' shell calls are tagged (a taken-over chat keeps it)
   };
 }

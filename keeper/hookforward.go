@@ -92,8 +92,8 @@ var errAIBGone = errors.New("the AIB named in the address file is not running")
 
 func hookMain(args []string) int {
 	if len(args) == 1 && args[0] == "--check" {
-		// hook 5 adds the agy-* events (hookforward_agy.go); hook 4 added the qwen-* events (hookforward_qwen.go); hook 3 added the local kill-by-name refusal (hookkill.go); hook 2 (no-stuck-processes) added the non-blocking pre-shell event; everything hook 1 does is unchanged, so AIB runs both.
-		fmt.Println(checkLine("hook 5"))
+		// hook 6 lets an Agent call's prompt grow by AIB's fixed shared-folder rule (sharedRuleSuffix); hook 5 adds the agy-* events (hookforward_agy.go); hook 4 added the qwen-* events (hookforward_qwen.go); hook 3 added the local kill-by-name refusal (hookkill.go); hook 2 (no-stuck-processes) added the non-blocking pre-shell event; everything hook 1 does is unchanged, so AIB runs both.
+		fmt.Println(checkLine("hook 6"))
 		return 0
 	}
 	socket := ""
@@ -316,11 +316,17 @@ func hookProof(key, nonce string, status int, body []byte) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+// sharedRuleSuffix: the only text AIB may append to an Agent/Task call's prompt (hook 6). It must equal SHARED_RULE_SUFFIX in
+// app/server/subagents/claude_config.ts (a test compares them).
+const sharedRuleSuffix = "\n\nAIB: aib-shared/ is shared and not part of your copy. Read it normally. To save a file there, write it with a shell command " +
+	"(for example a heredoc to aib-shared/<name>), because the Write and Edit tools refuse it."
+
 // checkPreToolAnswer: what to print for AIB's (signed) pre-tool answer, or false when it is none AIB gives (security review P1,
 // MF 1b). Accepted, and rebuilt here from the call itself:
 //   - {} for a tool that is not a subagent (nothing is printed);
 //   - a deny with a text reason;
-//   - for Agent/Task, updatedInput equal to the call's own tool_input plus isolation "worktree".
+//   - for Agent/Task, updatedInput equal to the call's own tool_input plus isolation "worktree" (hook 6: and, optionally, prompt =
+//     the call's own prompt + sharedRuleSuffix exactly).
 //
 // Anything else (allow, ask, continue, systemMessage, another input, {} for a subagent or for EnterWorktree/Workflow) is refused.
 func checkPreToolAnswer(input, body []byte) ([]byte, bool) {
@@ -377,11 +383,20 @@ func checkPreToolAnswer(input, body []byte) ([]byte, bool) {
 			return nil, false
 		}
 		want["isolation"] = "worktree"
-		if !reflect.DeepEqual(got, any(want)) {
-			return nil, false
-		}
 		exact, _ := toolInputMap(call.ToolInput, true) // the call's own values, numbers as written
 		exact["isolation"] = "worktree"
+		if !reflect.DeepEqual(got, any(want)) {
+			// hook 6: the call's own prompt plus AIB's shared-folder rule (sharedRuleSuffix), nothing else changed
+			orig, isText := want["prompt"].(string)
+			if !isText {
+				return nil, false
+			}
+			want["prompt"] = orig + sharedRuleSuffix
+			if !reflect.DeepEqual(got, any(want)) {
+				return nil, false
+			}
+			exact["prompt"] = orig + sharedRuleSuffix
+		}
 		answer, err := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PreToolUse", "updatedInput": exact}})
 		return answer, err == nil
 	default:

@@ -689,6 +689,11 @@ export class WslHostImpl implements WslHost {
     return !!this.hookTunnel && !!this.#readyValue?.methods.includes('subagent.reaps');
   }
 
+  /** True when the helper is of the build whose keeper knows hook 6 (it has `subagent.sharedrule`): AIB may append the aib-shared rule to Agent prompts. */
+  get hookSharedRule(): boolean {
+    return !!this.hookTunnel && !!this.#readyValue?.methods.includes('subagent.sharedrule');
+  }
+
   onMcpRequest(handler: (request: HelperMcpRequest['params']) => void): () => void {
     this.#mcpHandlers.add(handler);
     return () => this.#mcpHandlers.delete(handler);
