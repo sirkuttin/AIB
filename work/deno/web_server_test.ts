@@ -25,6 +25,8 @@ Deno.test('the route table is exactly the frozen list (paths, scopes and kinds)'
     'POST /api/live/swarm/tool', // swarm phase 1
     'POST /api/live/swarm/undo',
     'POST /api/live/swarm/merge-again',
+    'POST /api/live/swarm/list',
+    'POST /api/live/swarm/fork',
     'GET /api/live/swarm',
     'POST /api/live/agents/install/uninstall',
     'GET /api/live/terminal',

@@ -2553,3 +2553,8 @@ body.aib-mode-chat > main {
   font-size: 12px;
   line-height: 1;
 }
+
+/* a listed helper (left-list helpers): the same card as every chat, 24 px in under its main chat; nothing else differs */
+aside .conversation-row.helper-listed {
+  margin-left: 24px;
+}

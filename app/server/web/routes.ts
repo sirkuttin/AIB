@@ -136,6 +136,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/swarm/tool', 'worktree.tool', 'own-gate'], // swarm phase 1: a main chat's helper tools (its key)
   ['POST', '/api/live/swarm/undo', 'write', 'body'], // the merge line's Undo (page only)
   ['POST', '/api/live/swarm/merge-again', 'write', 'body'],
+  ['POST', '/api/live/swarm/list', 'write', 'body'], // Add to chat list / Move to Activity list (page only)
+  ['POST', '/api/live/swarm/fork', 'write', 'body'], // Fork this session (page only)
   ['GET', '/api/live/swarm', 'read', 'get'],
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
   ['GET', '/api/live/terminal', 'write', 'get'],

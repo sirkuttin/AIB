@@ -219,6 +219,7 @@ export const connectMethods = {
       if (startsLate) c.startProcess();
       c.sessionId = resume || null;
       if (!resume && options.picks) c.startPicks = { ...options.picks };
+      if (!resume && options.forkFrom) c.forkFrom = options.forkFrom;
       c.recovery = this.recovery as never;
       this.connections.set(c.id, c);
       // Its folder is a project from now on (the page, auto-reconnect, a keeper take-over and agent-started chats all come here).

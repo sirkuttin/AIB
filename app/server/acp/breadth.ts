@@ -186,6 +186,12 @@ export interface SessionCapabilities {
   mcp: { http: boolean; sse: boolean };
 }
 
+/** The agent advertises session/fork (claude-agent-acp 0.102, codex-acp 2.6): a fork copies its session. Kept apart from sessionCapabilities (its answers are frozen). */
+export function advertisesFork(initial: unknown): boolean {
+  const agent = isDict(initial) ? dictOr(initial.agentCapabilities) : {};
+  return isDict(dictOr(agent.sessionCapabilities).fork);
+}
+
 /** Which advertised session operations exist. Only spec-defined capabilities; no fork in ACP v1. */
 export function sessionCapabilities(initial: unknown): SessionCapabilities {
   const agent = isDict(initial) ? dictOr(initial.agentCapabilities) : {};

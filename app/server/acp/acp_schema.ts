@@ -274,6 +274,7 @@ export function validatePromptResult(result: unknown): boolean {
 export const RESULT_VALIDATORS: ReadonlyMap<string, (result: unknown) => unknown> = new Map<string, (result: unknown) => unknown>([
   ['initialize', validateInitializeResult],
   ['session/new', validateNewSessionResult],
+  ['session/fork', validateNewSessionResult],
   ['session/load', validateLoadSessionResult],
   ['session/prompt', validatePromptResult],
   ['session/set_mode', (r) => obj(r, 'result')],

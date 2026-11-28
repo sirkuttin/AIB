@@ -169,6 +169,24 @@ body {
   background: var(--accent-wash-4);
   color: var(--link);
 }
+/* "Add to chat list": a small always-visible text button on a helper card's title row (left-list helpers). */
+.sa-list {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 4px;
+  color: var(--link);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sa-list:hover {
+  background: var(--bg-card-hover);
+}
+.sa-list:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 1px;
+}
 /* A helper that waits on you: its card, then a row of small always-visible buttons (Allow / Deny, or Open). */
 .sa-askwrap {
   flex: 0 0 auto;

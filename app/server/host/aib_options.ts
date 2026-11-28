@@ -38,6 +38,8 @@ export interface ConnectOptions {
   picks?: (Partial<Record<'model' | 'mode' | 'effort', string>> & { modeAnyOf?: string[] }) | null;
   /** Swarm: this new chat is a helper of that main chat (swarm/service.ts). Its role is decided here, before its tools are (review break 1). */
   helperOf?: { helperId: string; parent: string } | null;
+  /** Fork this session instead of starting a new one (Fork this session): the source chat's session id. New chats only. */
+  forkFrom?: string | null;
   /** The automatic reconnect at start (reconnectOne), not the person's Continue: a WSL agent turned off for its distro is not refused then. */
   auto?: boolean;
   /**

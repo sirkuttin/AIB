@@ -509,6 +509,8 @@
         activity,
         background,
         ask: a.ask && typeof a.ask === 'object' && c.group === 'working' ? a.ask : null,
+        /* a helper that is not in the left chat list yet: its title row offers "Add to chat list" (once listed, no button at all) */
+        canList: a.helper === true && !!a.helperId && a.listed !== true,
         outcome,
         source: a.live ? 'live' : 'saved',
         end,
@@ -631,6 +633,7 @@
       const l1 = el('span', 'sa-line sa-l1');
       l1.append(el('span', 'sa-dot'), el('strong', 'sa-title', i.title));
       if (cmd) l1.append(cmd);
+      if (i.canList && ctx.onList) l1.append(listButton(i, ctx));
       if (i.when) l1.append(el('span', 'sa-when', i.when));
       b.append(l1);
       if (i.meta || i.tokens) {
@@ -647,6 +650,7 @@
     const row = i.exc ? el('span', 'sa-line sa-l1') : b;
     row.append(el('span', 'sa-dot'), el('strong', 'sa-title', i.title));
     if (cmd) row.append(cmd);
+    if (i.canList && ctx.onList) row.append(listButton(i, ctx));
     if (i.outcome) row.append(el('span', 'sa-outcome', i.outcome));
     if (i.modelText) row.append(el('span', 'sa-model', i.modelText));
     if (i.ran) row.append(el('span', 'sa-when', i.ran));
@@ -655,6 +659,25 @@
       b.append(row, wtLine(i.exc));
     }
     return b;
+  }
+  /* "Add to chat list": a small always-visible text button on the helper card's title row (a span, the card itself is a button). */
+  function listButton(i, ctx) {
+    const x = el('span', 'sa-list', 'Add to chat list');
+    x.setAttribute('role', 'button');
+    x.tabIndex = 0;
+    x.dataset.act = 'list';
+    x.setAttribute('aria-label', 'Add to chat list: ' + i.title);
+    x.title = 'Show this helper under its main chat in the left chat list';
+    const go = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      ctx.onList(i.a);
+    };
+    x.onclick = go;
+    x.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') go(e);
+    };
+    return x;
   }
   /* A helper that waits on you: small always-visible buttons under its card, so the request is answered without opening its chat.
      A plain approval: Allow / Deny (its allow-once and deny-once options); a question or anything bigger: Open (its history). */
@@ -714,6 +737,7 @@
         i.activity,
         i.background,
         i.ask,
+        i.canList,
         i.outcome,
         i.wt,
         i.exc,

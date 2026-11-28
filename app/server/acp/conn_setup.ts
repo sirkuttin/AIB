@@ -2,7 +2,7 @@
  * Connection methods: starting a session (initialize, authenticate, session/new and load, start picks) and sign-in.
  * Moved out of connection.ts (no change).
  */
-import { augmentInitialize, checkMode, type McpServer, optionValues, selectMcpServers, sessionCapabilities } from './breadth.ts';
+import { augmentInitialize, checkMode, type McpServer, optionValues, selectMcpServers, sessionCapabilities, advertisesFork } from './breadth.ts';
 import { LineMerger } from '../history/lines.ts';
 import { describeAuthMethods, isAuthRequired, RpcError } from './rpc_errors.ts';
 import { findOption as findPickOption } from '../state/agent_options.ts';
@@ -420,7 +420,7 @@ export const setupMethods = {
         this.$continued = false; // (an agent that only resumes replays nothing: nothing to drop)
       }
     } else {
-      result = await this.$setupSessionCall('session/new', {
+      const params = () => ({
         cwd: this.agentCwd,
         mcpServers: this.$acpMcp(mcpServers),
         ...this.artifactPrompt(this.mcpInConfig() ? this.mcpServers : mcpServers),
@@ -428,6 +428,21 @@ export const setupMethods = {
         ...this.claudeMeta(),
         ...this.codexMeta(),
       });
+      // A fork: the agent copies the session itself when it advertises session/fork; otherwise (or when it refuses) a new session
+      // starts and the caller sends a written summary of the chat as its first message (forkHow tells which).
+      if (this.forkFrom) {
+        if (advertisesFork(this.initial)) {
+          try {
+            result = await this.$setupSessionCall('session/fork', { sessionId: this.forkFrom, ...params() });
+            this.forkHow = 'copy';
+          } catch (error) {
+            if (!(error instanceof RpcError)) throw error;
+            log.info('session/fork refused by %s (%s): starting a new session with a summary', this.provider, error.message);
+          }
+        }
+        if (!this.forkHow) this.forkHow = 'summary';
+      }
+      result ??= await this.$setupSessionCall('session/new', params());
     }
     this.$takeSession(result, resume);
     if (!resume) {

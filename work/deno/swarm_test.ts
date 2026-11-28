@@ -329,12 +329,12 @@ function exists(path: string): boolean {
 
 Deno.test({
   ...T,
-  name: 'swarm caps: 3 helpers per project; overlapping owns refused; a non-git project gets no helper',
+  name: 'swarm caps: 5 helpers per main chat; overlapping owns refused; a non-git project gets no helper',
   async fn() {
     await using box = new Box();
     const main = await box.aib.connect('claude', box.project);
     const reg = new Registry(box.state);
-    for (const [n, owns] of [[1, 'a/'], [2, 'b/'], [3, 'c/']] as const) {
+    for (const [n, owns] of [[1, 'a/'], [2, 'b/'], [3, 'c/'], [4, 'd/'], [5, 'e/']] as const) {
       await reg.update(`h_0000000${n}`, () => (<never> {
         id: `h_0000000${n}`,
         title: `seed ${n}`,
@@ -342,14 +342,14 @@ Deno.test({
         parent: { live: main.id, lasting: '' },
         chat: { live: '', lasting: '', provider: 'codex', model: '', mode: 'auto' },
         brief: { goal: '', owns: [owns], avoid: [], done_when: '', reply_with: '', test_cmd: '', read_only: false, context_files: [] },
-        state: n === 3 ? 'merged' : 'working', // a done-but-unmerged helper now counts too (swarm_bugs_test.ts bug 5)
+        state: n === 5 ? 'merged' : 'working', // a done-but-unmerged helper now counts too (swarm_bugs_test.ts bug 5)
         notes: [],
         reports: [],
       }));
     }
     const clash = await box.swarm.tool(main.id, 'start_helper', { ...BRIEF, owns: ['a/x.txt'] });
     assertEquals((clash[1] as Json).code, 'owns_clash');
-    await reg.patch('h_00000003', { state: 'working' });
+    await reg.patch('h_00000005', { state: 'working' });
     const capped = await box.swarm.tool(main.id, 'start_helper', BRIEF);
     assertEquals((capped[1] as Json).code, 'cap');
     const mode = await box.swarm.tool(main.id, 'start_helper', { ...BRIEF, mode: 'bypassPermissions' });

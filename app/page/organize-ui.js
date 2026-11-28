@@ -75,6 +75,12 @@
     const e = entryOf(c);
     if (e.deletedAt && !isLive(c)) return 'deleted';
     if (e.archivedAt) return 'archived';
+    // a listed helper sits under its main chat, in whatever section that chat is in
+    const parent = host && typeof host.listedParent === 'function' ? host.listedParent(c) : null;
+    if (parent && parent !== c) {
+      const b = bucket(parent);
+      return b === 'deleted' ? 'main' : b;
+    }
     if (e.holdAt) return 'hold'; // on hold wins: holding unpins (older entries may still carry both)
     if (e.pinnedAt) return 'pinned';
     return 'main';
@@ -93,6 +99,7 @@
     out.pinned.sort((a, b) => entryOf(b).pinnedAt - entryOf(a).pinnedAt || byKey(a, b));
     out.hold.sort((a, b) => entryOf(b).holdAt - entryOf(a).holdAt || byKey(a, b));
     out.archived.sort((a, b) => entryOf(b).archivedAt - entryOf(a).archivedAt || byKey(a, b));
+    if (host && typeof host.nest === 'function') for (const k of Object.keys(out)) out[k] = host.nest(out[k]); // listed helpers right after their main chat
     return out;
   }
   const count = (all, provider) =>
@@ -604,6 +611,7 @@
       sep();
     }
     out.push({ id: 'rename', label: 'Rename' });
+    if (host && typeof host.listedHelper === 'function' && host.listedHelper(c)) out.push({ id: 'unlist', label: 'Move to Activity list' });
     if (can && !e.archivedAt) {
       out.push({ id: e.pinnedAt ? 'unpin' : 'pin', label: e.pinnedAt ? 'Unpin' : 'Pin' });
       if (e.holdAt) {
@@ -616,6 +624,7 @@
     if (o.thinking === true || o.thinking === false)
       out.push({ id: 'thinking', label: 'Show thinking', checked: o.thinking });
     if (o.handoff) out.push({ id: 'handoff', label: 'Continue with another agent\u2026' });
+    if (host && typeof host.canFork === 'function' && host.canFork(c)) out.push({ id: 'fork', label: 'Fork this session' });
     if (o.editor && c && typeof c.cwd === 'string' && c.cwd)
       out.push({ id: 'editor', label: 'Open folder in ' + o.editor });
     if (isLive(c)) out.push({ id: 'end', label: "End this chat's session" });
@@ -657,6 +666,10 @@
       }
       case 'handoff':
         return host.handoff(c);
+      case 'fork':
+        return host.fork(c);
+      case 'unlist':
+        return host.unlist(c);
       case 'editor': {
         const E = root.AgentEditors;
         return E && c && c.cwd ? E.openFolder(c.cwd) : undefined;

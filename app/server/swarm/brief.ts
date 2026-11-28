@@ -6,7 +6,7 @@
 import type { Brief } from './registry.ts';
 
 export const REQUIRED = ['title', 'job', 'goal', 'owns', 'done_when', 'reply_with', 'test_cmd'] as const;
-const OPTIONAL = ['avoid', 'context_files', 'read_only', 'provider', 'model', 'why'];
+const OPTIONAL = ['avoid', 'context_files', 'read_only', 'provider', 'model', 'why', 'chat'];
 export const REPORT_CLIP = 4000;
 /** A long reply keeps its start and, more, its end (the closing summary is what the main agent needs): HEAD + TAIL = REPORT_CLIP. */
 export const REPORT_HEAD = 1500;
@@ -59,6 +59,8 @@ export function readBrief(args: Record<string, unknown>): {
   provider: string;
   model: string;
   why: string;
+  /** The user asked for a separate chat with this helper (start_helper `chat: true`). */
+  chat: boolean;
 } {
   for (const key of Object.keys(args)) {
     if (!(REQUIRED as readonly string[]).includes(key) && !OPTIONAL.includes(key)) {
@@ -86,6 +88,7 @@ export function readBrief(args: Record<string, unknown>): {
     provider,
     model: text(args.model, 120),
     why,
+    chat: args.chat === true,
     brief: {
       goal: text(args.goal, 4000),
       owns: list(args.owns).map(normOwn),

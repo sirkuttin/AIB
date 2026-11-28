@@ -9,7 +9,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, newAib, ROOT, T } from './_wsl_e2e.ts';
 import { wslHelpersAvailable } from '../../app/server/wsl/helpers.ts';
-import { conflicts, type Env, startAndLand, stopAndUnlandedWork, SwarmLab, twoHelpersOneFolder } from './_wsl_helpers_scenarios.ts';
+import { conflicts, type Env, listedAndFork, startAndLand, stopAndUnlandedWork, SwarmLab, twoHelpersOneFolder } from './_wsl_helpers_scenarios.ts';
 
 /** The distro as a scenario sees it: repos under ROOT, files and git by `wsl --exec`, nothing else. */
 class RealDistro implements Env {
@@ -86,6 +86,11 @@ Deno.test({
   name: 'wsl e2e helpers: stop keeps the work; work_list, work_diff, work_land and work_discard (real distro)',
   ...T,
   fn: () => inRealDistro(stopAndUnlandedWork),
+});
+Deno.test({
+  name: 'wsl e2e helpers: left-list helpers: asked-for chat, Add to chat list, fork (copy and summary) (real distro)',
+  ...T,
+  fn: () => inRealDistro(listedAndFork),
 });
 Deno.test({
   name: 'wsl e2e helpers: two helpers of one folder land one after the other; Undo and Merge again (real distro)',

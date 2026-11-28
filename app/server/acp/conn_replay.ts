@@ -303,8 +303,8 @@ export const replayMethods = {
       if (method === 'initialize') {
         this.initial = result;
         this.$applyInitialize();
-      } else if (method === 'session/new' || method === 'session/load' || method === 'session/resume') {
-        this.$applySession(result, method === 'session/new' ? null : get(params, 'sessionId') as string | null);
+      } else if (method === 'session/new' || method === 'session/fork' || method === 'session/load' || method === 'session/resume') {
+        this.$applySession(result, method === 'session/new' || method === 'session/fork' ? null : get(params, 'sessionId') as string | null);
       } else if (method === 'session/set_mode') {
         this.$modes().currentModeId = get(params, 'modeId');
       } else if (method === 'session/set_config_option' && isDict(result)) {

@@ -239,6 +239,16 @@ export function aibRoutes(): Map<string, AibHandler> {
     const folders = restoreFolders(ctx.conversations, body);
     const reply = await conversationAction(aibOf(ctx), body);
     if (reply[0] === 200) await bringBack(ctx.removedProjects, folders, ctx.addedProjects); // restoring a chat brings its removed project back
+    // Archiving a main chat archives the helpers listed under it (left-list helpers, owner 2026-11-27)
+    if (reply[0] === 200 && body?.action === 'archive' && typeof body.provider === 'string' && typeof body.sessionId === 'string') {
+      const parent = `${body.provider}:${body.sessionId}`;
+      for (const h of swarmOf(ctx).registry.all()) {
+        const at = h.chat?.lasting?.indexOf(':') ?? -1;
+        if (!h.listed || h.parent.lasting !== parent || at < 1) continue;
+        await conversationAction(aibOf(ctx), { action: 'archive', provider: h.chat.lasting.slice(0, at), sessionId: h.chat.lasting.slice(at + 1) })
+          .catch((error) => console.error('Archiving the listed helper %s failed: %s', h.id, error instanceof Error ? error.message : error));
+      }
+    }
     return reply;
   });
   // ---- editors ----
@@ -428,6 +438,8 @@ export function aibRoutes(): Map<string, AibHandler> {
   // ---- swarm phase 1: the merge line's Undo / Merge again, and a chat's helpers (page only; never the agent key) ----
   routes.set('POST /api/live/swarm/undo', (ctx, _url, body) => swarmOf(ctx).undo(body?.helper));
   routes.set('POST /api/live/swarm/merge-again', (ctx, _url, body) => swarmOf(ctx).mergeAgain(body?.helper));
+  routes.set('POST /api/live/swarm/list', (ctx, _url, body) => swarmOf(ctx).setListed(body?.helper, body?.listed));
+  routes.set('POST /api/live/swarm/fork', (ctx, _url, body) => swarmOf(ctx).fork(body));
   routes.set('GET /api/live/swarm', async (ctx, url) => {
     const id = one(argsOf(url), 'conversationId');
     const swarm = swarmOf(ctx);
@@ -455,6 +467,8 @@ export function aibRoutes(): Map<string, AibHandler> {
       id: h.id,
       kind: h.kind ?? 'helper', // 'subagent': a landing entry of a Claude subagent, not a helper chat (Activity lists helper chats only)
       hidden: hiddenFromLists(h), // left out of the chat lists (registry.ts hiddenFromLists: the one predicate)
+      listed: !!h.listed, // in the left chat list under its main chat (page: Move to Activity list / Add to chat list)
+      ...(h.fork ? { fork: { of: h.fork.of, how: h.fork.how } } : {}),
       title: h.title,
       provider: h.chat.provider,
       label: chatName(h), // "Codex", "Claude Code · strata": Activity's row says which agent it is

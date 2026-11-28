@@ -1215,6 +1215,8 @@
         (a, b) =>
           Number(!!b.live) - Number(!!a.live) || (b.created || 0) - (a.created || 0) || a.key.localeCompare(b.key),
       );
+    const nested = nestListed(rows);
+    rows.splice(0, rows.length, ...nested);
     const signature = JSON.stringify([
       provider,
       q,
@@ -1233,6 +1235,7 @@
         ownershipHints[c.provider + ':' + c.id]?.verdict,
         c.elsewhere && c.elsewhere.working,
         window.AgentSidebarUI?.rowSig(c),
+        listedHelperId(c) + '>' + (listedParentOf(c) ? aliasKey(listedParentOf(c)) : ''),
         c.last?.text?.length || 0,
         !!window.AibTerminal?.hasSession(aliasKey(c)),
         !!window.AgentWorkspaceUI?.chatPoppedOut?.(aliasKey(c)),
@@ -1260,6 +1263,7 @@
       '',
       'connection' + (selected && aliasKey(selected) === aliasKey(c) ? ' selected' : ''),
     );
+    if (listedParentOf(c)) wrapper.classList.add('helper-listed'); // a listed helper: the same card, 24 px in under its main chat
     button.dataset.key = aliasKey(c);
     button.append(
       text('small', workspace(c), 'connection-workspace'),
@@ -5541,6 +5545,12 @@
     conversations: () => conversations,
     setName: (c, v) => renameChat(c, v),
     handoff: (c) => handoffFor(c),
+    canFork: (c) => !!(c?.live && !c.live.closed && c.live.ready !== false),
+    fork: (c) => forkChat(c),
+    listedHelper: (c) => listedHelperId(c),
+    unlist: (c) => setHelperListed(listedHelperId(c), false),
+    listedParent: (c) => listedParentOf(c),
+    nest: (list) => nestListed(list),
     menuExtras: (c) => window.AgentWorkspaceUI?.chatMenuItems?.(c) || [],
     getSelected: () => selected,
     fail,
@@ -6126,6 +6136,49 @@
   /* The ONE client predicate for "this chat is left out of the chat lists" (the server's is registry.ts hiddenFromLists, sent as
      `hidden` on each helper). A later rule that tucks a helper under its main chat changes this and that one. A helper that is done
      or merged is left out too. The chat stays reachable from its main chat's Activity row, search (Ctrl+K) and a direct link. */
+  /* The registry record of the helper this chat is, listed or not (null for a chat that is no helper). */
+  function helperRecord(c) {
+    const k = aliasKey(c);
+    for (const h of swarm.list) {
+      if (h.kind === 'subagent') continue;
+      if ((h.chatKey && k === h.chatKey) || (h.chat && c.live && c.live.id === h.chat) || (c.live?.swarm?.helperId && c.live.swarm.helperId === h.id)) return h;
+    }
+    return null;
+  }
+  /* A helper the user listed (asked for, forked, or added from Activity): its chat card is a normal card in the left list, under its
+     main chat. Its main chat's conversation, or null (a helper not listed, or whose main chat is not known here). */
+  function listedParentOf(c) {
+    const h = helperRecord(c);
+    if (!h || h.hidden !== false) return null;
+    return helperParent(h);
+  }
+  const listedHelperId = (c) => {
+    const h = helperRecord(c);
+    return h && h.hidden === false ? h.id : '';
+  };
+  /* Listed helpers go right after their main chat, in start order (never by activity); a helper whose main chat is not in this list stays where it is. */
+  function nestListed(list) {
+    const kids = new Map();
+    const inList = new Set(list.map((c) => aliasKey(c)));
+    for (const c of list) {
+      const p = listedParentOf(c);
+      if (!p || !inList.has(aliasKey(p))) continue;
+      const pk = aliasKey(p);
+      if (!kids.has(pk)) kids.set(pk, []);
+      kids.get(pk).push(c);
+    }
+    if (!kids.size) return list;
+    const started = (c) => Number(helperRecord(c)?.createdAt) || 0;
+    const out = [];
+    const moved = new Set([...kids.values()].flat());
+    for (const c of list) {
+      if (moved.has(c)) continue;
+      out.push(c);
+      const own = kids.get(aliasKey(c));
+      if (own) out.push(...own.sort((a, b) => started(a) - started(b) || aliasKey(a).localeCompare(aliasKey(b))));
+    }
+    return out;
+  }
   function helperInfo(c) {
     const k = aliasKey(c);
     for (const h of swarm.list) {
@@ -6135,6 +6188,7 @@
         return { id: h.id, parent: parent ? titleOf(parent) : '' };
       }
     }
+    if (listedHelperId(c)) return null; // the user listed it: an ordinary card of the left list
     if (c.live?.swarm?.role === 'helper' && !c.live.closed) {
       const parent = conversations.find((x) => x.live && x.live.id === c.live.swarm.parent);
       return { id: c.live.swarm.helperId || '', parent: parent ? titleOf(parent) : '' };
@@ -6160,6 +6214,7 @@
       helper: true,
       helperId: h.id,
       name: h.title,
+      listed: h.listed === true,
       fullName: (c && aliases[aliasKey(c)]) || h.title + ' (' + (h.label || h.provider) + ')', // the chat's own name, as it shows everywhere else
       description: '',
       agentType: h.label || h.provider,
@@ -6220,6 +6275,39 @@
     if (selected && current) refresh();
     renderProjectActivity();
   }
+  /* "Add to chat list" (Activity's title row) and "Move to Activity list" (the listed card's menu): the server keeps it. */
+  async function setHelperListed(helperId, listed) {
+    if (!helperId) return;
+    try {
+      await post('swarm/list', { helper: helperId, listed });
+    } catch (e) {
+      fail(e);
+      return;
+    }
+    await loadSwarmHelpers(true);
+    sidebarSignature = '';
+    renderConversations();
+    renderProjectActivity();
+  }
+  /* "Fork this session": a helper with the same agent and its own copy, listed under this chat, opened and waiting for the first message. */
+  async function forkChat(c) {
+    if (!c?.live || c.live.closed) return;
+    let made;
+    try {
+      made = await post('swarm/fork', { id: c.live.id, title: titleOf(c) });
+    } catch (e) {
+      fail(e);
+      return;
+    }
+    await loadSwarmHelpers(true);
+    let fork = null;
+    for (let i = 0; i < 40 && !fork; i++) {
+      await listConversations().catch(() => {});
+      fork = conversations.find((x) => x.live && !x.live.closed && x.live.id === made.chat) || null;
+      if (!fork) await new Promise((r) => setTimeout(r, 250));
+    }
+    if (fork) await openConversation(fork);
+  }
   function helperRows(key) {
     const out = [];
     for (const h of swarm.list) {
@@ -6240,7 +6328,7 @@
       const r = await get('/api/live/swarm', {});
       const next = Array.isArray(r?.helpers) ? r.helpers : [];
       // the left list leaves helper chats out and an approval card reads the helper's requests: draw again when either changed
-      const sig = JSON.stringify(next.map((h) => [h.id, h.hidden, h.chatKey, h.chat, h.title, h.label, h.waits ? h.waits.permissions.map((p) => p.key) : 0]));
+      const sig = JSON.stringify(next.map((h) => [h.id, h.hidden, h.listed, h.createdAt, h.parentKey, h.chatKey, h.chat, h.title, h.label, h.waits ? h.waits.permissions.map((p) => p.key) : 0]));
       swarm.list = next;
       if (sig !== swarm.sig) {
         swarm.sig = sig;
@@ -6322,6 +6410,7 @@
         // A row opens its history in this panel, at its width, for any chat of the project; it never opens that chat.
         onOpen: (agent) => toggleSubagent(agent, key),
         onAsk: (agent, act) => (act === 'open' ? toggleSubagent(agent, key) : answerHelperAsk(agent, act)),
+        onList: (agent) => setHelperListed(agent.helperId, true),
         rerender: renderProjectActivity,
       });
       const running = a.commands.filter(isRunningCommand);
@@ -6472,6 +6561,7 @@
           onModel: (m) => (working = m.working.length),
           onOpen: (agent) => toggleSubagent(agent, key),
           onAsk: (agent, act) => (act === 'open' ? toggleSubagent(agent, key) : answerHelperAsk(agent, act)),
+          onList: (agent) => setHelperListed(agent.helperId, true),
           rerender: renderProjectActivity,
         });
         sec.subLabel.hidden = sec.subBox.hidden = !rows.length;

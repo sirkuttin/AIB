@@ -99,7 +99,13 @@ export const viewMethods = {
     const cursor = Math.trunc(Number(after));
     if (Number.isNaN(cursor)) return Promise.reject(new ValueError(`invalid literal for int() with base 10: ${pyRepr(after)}`));
     if (cursor === 0) void this.limits.refresh(connection); // a page opened this chat (at most once a minute per account)
-    return Promise.resolve({ ...connection.public(cursor), limits: this.limits.view(connection) });
+    // turnByUser / forkHow: for the swarm service (helper chat:true, Fork this session); left out of Connection.public() (frozen answers)
+    return Promise.resolve({
+      ...connection.public(cursor),
+      limits: this.limits.view(connection),
+      ...(connection.userTurn() ? { turnByUser: true } : {}),
+      ...(connection.forkHow ? { forkHow: connection.forkHow } : {}),
+    });
   },
 
   /**

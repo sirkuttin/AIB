@@ -179,20 +179,22 @@ Deno.test({
       assertEquals(clash.code, 'owns_clash', 'a done helper still owns its files');
       assert(String(clash.error).includes('finished, not merged yet'), String(clash.error));
       await seed(f.swarm, 'h_cap00003', mine(['c/'], 'working'));
+      await seed(f.swarm, 'h_cap00004', mine(['f/'], 'working'));
+      await seed(f.swarm, 'h_cap00005', mine(['g/'], 'working'));
       const capped = await start(['d/']);
-      assertEquals(capped.code, 'cap', '2 done + 1 working = 3 places taken');
+      assertEquals(capped.code, 'cap', '2 done + 3 working = 5 places taken');
       assert(String(capped.error).includes('2 finished but not merged yet'), String(capped.error));
       const caps = ((await f.swarm.tool('main-1', 'helper_providers', {}))[1] as { caps: Json }).caps;
-      assertEquals(caps.running, 3);
+      assertEquals(caps.running, 5);
       // merged or discarded: the place and the files are free (a refusal that is not cap or owns_clash means the check passed)
       await f.swarm.registry.patch('h_cap00001', { state: 'merged' });
       await f.swarm.registry.patch('h_cap00002', { state: 'discarded' });
-      assertEquals(((await f.swarm.tool('main-1', 'helper_providers', {}))[1] as { caps: Json }).caps.running, 1);
+      assertEquals(((await f.swarm.tool('main-1', 'helper_providers', {}))[1] as { caps: Json }).caps.running, 3);
       const free = await start(['a/x.txt']);
       assert(free.code !== 'owns_clash' && free.code !== 'cap', JSON.stringify(free));
       // a done helper that was read-only holds nothing
       for (const id of Object.keys({ h_cap00001: 1, h_cap00002: 1 })) await f.swarm.registry.patch(id, { state: 'done', brief: { ...SEED_BRIEF, owns: ['a/'], read_only: true } });
-      assertEquals(((await f.swarm.tool('main-1', 'helper_providers', {}))[1] as { caps: Json }).caps.running, 1);
+      assertEquals(((await f.swarm.tool('main-1', 'helper_providers', {}))[1] as { caps: Json }).caps.running, 3);
     } finally {
       Deno.removeSync(dir, { recursive: true });
     }

@@ -159,7 +159,7 @@ Deno.test({
     assertEquals(h.chat.label, 'Claude Code · strata');
     // it counts toward the cap like any helper
     const cap = ((await box.swarm.tool(main.id, 'helper_providers', {}))[1] as Json).caps as Json;
-    assertEquals([cap.running, cap.max], [1, 3]);
+    assertEquals([cap.running, cap.max], [1, 5]);
     await box.swarm.tool(main.id, 'stop_helper', { helper: id });
   },
 });

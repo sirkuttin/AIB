@@ -235,6 +235,8 @@
       run: (ctx) => ctx.do.popOutDoc(),
     },
     chatAction('handoff', 'Continue with another agent…', { keywords: ['handoff', 'switch agent', 'claude'] }),
+    chatAction('fork', 'Fork this session', { keywords: ['copy', 'branch', 'duplicate', 'helper'] }),
+    chatAction('unlist', 'Move to Activity list', { keywords: ['helper', 'chat list', 'sidebar'] }),
     chatAction('end', "End this chat's session", {
       keywords: ['stop', 'disconnect', 'close', 'end session', 'studio session'],
       danger: true,

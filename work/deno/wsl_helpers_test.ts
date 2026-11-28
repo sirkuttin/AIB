@@ -22,7 +22,7 @@ import { RpcError } from '../../app/server/wsl/helper/rpc.ts';
 import { setWslHostResolver } from '../../app/server/wsl/access.ts';
 import { WslHelperError } from '../../app/server/wsl/contract.ts';
 import * as wh from '../../app/server/wsl/helpers.ts';
-import { conflicts, type Env, startAndLand, stopAndUnlandedWork, twoHelpersOneFolder } from './_wsl_helpers_scenarios.ts';
+import { conflicts, type Env, listedAndFork, startAndLand, stopAndUnlandedWork, twoHelpersOneFolder } from './_wsl_helpers_scenarios.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false, ignore: !HAVE_GIT };
@@ -132,6 +132,11 @@ Deno.test({
   name: 'wsl helpers (fakes): stop keeps the work; work_list, work_diff, work_land and work_discard on a stopped helper',
   ...T,
   fn: () => withDistro(stopAndUnlandedWork),
+});
+Deno.test({
+  name: 'wsl helpers (fakes): left-list helpers: asked-for chat, Add to chat list, fork (copy and summary), cap places',
+  ...T,
+  fn: () => withDistro(listedAndFork),
 });
 Deno.test({
   name: 'wsl helpers (fakes): two helpers of one folder land one after the other; Undo and Merge again',

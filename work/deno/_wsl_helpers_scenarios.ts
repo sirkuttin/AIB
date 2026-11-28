@@ -13,7 +13,7 @@ import { Swarm } from '../../app/server/swarm/service.ts';
 import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
 import { wslLoc } from '../../app/server/wsl/access.ts';
 import { wslCreate, wslPlanWithReason } from '../../app/server/wsl/worktrees.ts';
-import { readHelpers } from '../../app/server/swarm/registry.ts';
+import { hiddenFromLists, readHelpers } from '../../app/server/swarm/registry.ts';
 
 type Json = Record<string, unknown>;
 
@@ -65,6 +65,8 @@ export class SwarmLab {
   readonly calls: [string, Json][] = [];
   readonly swarm: Swarm;
   readonly projectRef: string;
+  /** What a forking connect reports for the new chat: the agent copied its session ('copy') or could not ('summary'). */
+  forkHow: 'copy' | 'summary' = 'copy';
   #n = 0;
 
   constructor(readonly env: Env, readonly repo: string) {
@@ -118,6 +120,7 @@ export class SwarmLab {
           state: 'ready',
           busy: false,
           pickResults: [{ kind: 'mode', ok: true, value: 'auto' }],
+          forkHow: body.forkFrom ? this.forkHow : '',
           attention: { state: 'working', turnEndedAt: '' },
           queue: { items: [] },
           events: [],
@@ -187,6 +190,71 @@ export class SwarmLab {
       }
     }
   }
+}
+
+/**
+ * Left-list helpers in a WSL project (owner 2026-11-27): chat:true is refused unless the user started the turn, and listed when
+ * allowed; Add to chat list / Move to Activity list; a fork (copy and summary) makes its own copy in the distro, is named
+ * "<chat> (fork)", listed under the main chat, and its summary or its "Copy of" line says which.
+ */
+export async function listedAndFork(env: Env): Promise<void> {
+  await withLab(env, async (lab) => {
+    lab.parent.sessionId = 'p1';
+    // the user did not start this turn: no chat
+    lab.parent.turnByUser = false;
+    const refused = (await lab.swarm.tool(PARENT, 'start_helper', { ...BRIEF, chat: true }))[1] as Json;
+    assertEquals(refused.code, 'not_user_turn');
+    // the user asked for a chat with it
+    lab.parent.turnByUser = true;
+    const asked = await lab.start({ chat: true, owns: ['test/asked/**'] });
+    const a = lab.swarm.registry.get(asked.id)!;
+    assertEquals([a.listed, a.byUser], [true, true]);
+    assertEquals(hiddenFromLists(a), false);
+    assert(a.worktree.path.startsWith('wsl://'), 'its copy is in the distro: ' + a.worktree.path);
+    // an Activity-only helper, added to the chat list from Activity and moved back
+    lab.parent.turnByUser = false;
+    const plain = await lab.start({ owns: ['test/plain/**'] });
+    assertEquals(hiddenFromLists(lab.swarm.registry.get(plain.id)), true);
+    assertEquals((await lab.swarm.setListed(plain.id, true))[0], 200);
+    assertEquals(hiddenFromLists(lab.swarm.registry.get(plain.id)), false);
+    assertEquals((await lab.swarm.setListed(plain.id, false))[0], 200);
+    assertEquals(hiddenFromLists(lab.swarm.registry.get(plain.id)), true);
+    // fork, the agent copies its session
+    lab.forkHow = 'copy';
+    const [code, made] = await lab.swarm.fork({ id: PARENT, title: 'Login chat' });
+    assertEquals(code, 200, JSON.stringify(made));
+    const copyId = String((made as Json).helper);
+    await until('the copy fork open', () => lab.swarm.registry.get(copyId)?.fork?.how === 'copy');
+    const copy = lab.swarm.registry.get(copyId)!;
+    assertEquals([copy.title, copy.listed, copy.byUser, copy.parent.live], ['Login chat (fork)', true, true, PARENT]);
+    assertEquals(wslLoc(copy.worktree.path)?.distro, env.distro, 'its own git copy is in the distro');
+    assertEquals(lab.prompts(copy.chat.live), [], 'waiting for the first message');
+    assert(
+      lab.calls.some(([n, b]) => n === 'swarm-note' && b.id === copy.chat.live && String(b.message).startsWith('Copy of “Login chat”')),
+      'its first line says Copy of',
+    );
+    assert(
+      lab.calls.some(([n, b]) => n === 'swarm-note' && b.id === PARENT && b.message === 'Forked “Login chat” into “Login chat (fork)” · in your chat list'),
+      'one line in the main chat',
+    );
+    // fork, a written summary
+    lab.forkHow = 'summary';
+    lab.parent.events = [
+      { kind: 'user', data: { text: 'Fix the login page' } },
+      { kind: 'update', data: { update: { sessionUpdate: 'agent_message_chunk', content: { text: 'Fixed.' } } } },
+    ];
+    const [code2, made2] = await lab.swarm.fork({ id: PARENT, title: 'Login chat' });
+    assertEquals(code2, 200, JSON.stringify(made2));
+    const sumId = String((made2 as Json).helper);
+    await until('the summary fork open', () => lab.swarm.registry.get(sumId)?.fork?.how === 'summary');
+    const sum = lab.swarm.registry.get(sumId)!;
+    await until('the summary sent', () => lab.prompts(sum.chat.live).length === 1);
+    const first = lab.prompts(sum.chat.live)[0];
+    assert(first.startsWith('Summary of “Login chat”') && first.includes('Fix the login page'), first.slice(0, 120));
+    // forks and asked-for chats are not agent-started helpers: only the plain one holds a place of the cap
+    const caps = ((await lab.swarm.tool(PARENT, 'helper_providers', {}))[1] as { caps: Json }).caps;
+    assertEquals(caps.running, 1);
+  });
 }
 
 async function withLab(env: Env, run: (lab: SwarmLab, repo: string) => Promise<void>): Promise<void> {

@@ -19,6 +19,7 @@ const FLAGS = {
   'replay-history': 'bool', 'new-session': 'str', 'replay-file': 'str', 'demo': 'bool', 'models': 'bool', 'beta-auth': 'bool',
   'acp-models': 'bool', 'claude-modes': 'bool', 'codex-modes': ['v2.6', 'old', 'neither'], 'fixture-login': 'bool',
   'prompt-auth': 'bool', 'fail-login': 'bool', 'terminal-env': 'bool', 'held-turn': 'bool', 'not-claude': 'bool', 'child-pid-file': 'str',
+  'fork': 'bool', 'fork-refuse': 'bool', // session/fork advertised (claude-agent-acp, codex-acp do); -refuse: it answers with an error
   'limits': 'bool', 'extra-dirs': 'bool', 'steer': ['claude', 'codex', 'omp', 'other'],
   'additional-mcp-config': 'str', // Copilot's launch flag (agents/copilot_mcp.ts): accepted and ignored
 };
@@ -1000,6 +1001,7 @@ print("hello")
         capabilities.mcpCapabilities = { http: args.mcp_http, sse: false };
       }
       if (args.list_sessions) (capabilities.sessionCapabilities ??= {}).list = {};
+      if (args.fork) (capabilities.sessionCapabilities ??= {}).fork = {};
       if (args.extra_dirs) Object.assign(capabilities.sessionCapabilities ??= {}, { additionalDirectories: {}, systemPrompt: {} });
       if (args.held_turn && !args.not_claude) capabilities._meta = { claudeCode: { promptQueueing: true } };
       if (args.steer === 'claude') capabilities._meta = { claudeCode: { promptQueueing: true }, authStatus: {} };
@@ -1058,6 +1060,17 @@ print("hello")
       else {
         authenticated = true;
         result(key, {});
+      }
+    } else if (method === 'session/fork') {
+      if (args.fork_refuse) emit({ id: key, error: { code: -32603, message: 'Fixture fork refused' } });
+      else {
+        sessionName = fakeSession;
+        sessionCwd = params.cwd || sessionCwd;
+        lastMcp = params.mcpServers;
+        const forked = { sessionId: sessionName, modes: structuredClone(modes) };
+        if (args.breadth) forked.configOptions = configOptions;
+        result(key, forked);
+        if (args.breadth) breadthAnnounce();
       }
     } else if (method === 'session/new' || method === 'session/load') {
       if (!authOk()) emit({ id: key, error: { code: -32000, message: 'Authentication required', data: { reason: 'auth_required' } } });

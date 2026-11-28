@@ -306,6 +306,17 @@ export class Connection {
    * setup() right after session/new and before the connection is ready, so the first prompt already runs with them.
    */
   startPicks: (Partial<Record<'model' | 'mode' | 'effort', string>> & { modeAnyOf?: string[] }) | null = null;
+  /**
+   * Fork this session (ACP session/fork) instead of starting a new one: the session id of the chat a user forked (Fork this session,
+   * swarm/service.ts). `forkHow` is what happened: "copy" (the agent forked its own session), "summary" (the agent does not advertise
+   * fork, or refused it: a new session; the caller sends a written summary first), "" (not a fork).
+   */
+  forkFrom: string | null = null;
+  /** The turn running now was started by the user (see turnByUser). */
+  userTurn(): boolean {
+    return this.busy && !this.autonomous && this.turnByUser;
+  }
+  forkHow: 'copy' | 'summary' | '' = '';
   /** What happened to each start pick: {kind, value, ok, message?}. Sent to the page in public(). */
   pickResults: Json[] = [];
   /** The session/new reply's settings before any pick was applied (the agent's defaults); null for a reopened chat. */
@@ -386,6 +397,8 @@ export class Connection {
    * alone by the end-of-helper sweep (swarm/service.ts #endable). Kept in the snapshot, so it survives a rebuild.
    */
   ownerTouched = false;
+  /** The turn running now was started by a message from the user, not by AIB's own swarm/merge lines: helper `chat: true` is only allowed then. */
+  turnByUser = false;
   /** cancel() cancels every prompt up to this number (one still before its send is dropped; later ones go through). */
   cancelSeq = 0;
   /** AIB hook (worktree live sync): called before the prompt is sent. */

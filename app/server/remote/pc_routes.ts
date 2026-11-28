@@ -455,6 +455,8 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'POST /api/live/swarm/tool': AGENT_KEY,
   'POST /api/live/swarm/undo': scope(S),
   'POST /api/live/swarm/merge-again': scope(S),
+  'POST /api/live/swarm/list': scope(S),
+  'POST /api/live/swarm/fork': scope(S),
   // ---- Changes (read only now), branch ----
   'GET /api/live/changes': scope(F),
   'GET /api/live/changes/file': scope(F),

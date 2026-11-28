@@ -343,6 +343,7 @@ export const turnMethods = {
   $startTurn(this: Connection, clientMessageId: string | null, fingerprint: string): number {
     this.busy = true;
     this.autonomous = false; // a prompt sent while Claude Code ran a cycle of its own takes that cycle over
+    this.turnByUser = !(isStr(clientMessageId) && /^(swarm|merge)-/.test(clientMessageId));
     this.$turnHelpers.clear();
     this.$steerTurn = { injected: 0, outputAfter: false, unread: [] };
     this.$clearSettle();

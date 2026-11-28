@@ -51,6 +51,7 @@ op('connect', true, async function (body) {
     continueAnyway,
     picks: readPicks(body.picks),
     helperOf: readHelperOf(body.helperOf),
+    forkFrom: typeof body.forkFrom === 'string' && body.forkFrom.length < 200 ? body.forkFrom : null,
     ownCopy: readOwnCopy(body.ownCopy),
   });
   return [200, connection.public()];

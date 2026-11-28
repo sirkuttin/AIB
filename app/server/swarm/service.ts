@@ -22,6 +22,7 @@ import * as agentRegistry from '../agents/agent_registry.ts';
 import { type Helper, helperOf, HOLDING_STATES, type Landing, newHelperId, readHelpers, Registry, RUNNING_STATES } from './registry.ts';
 import { lockChats, newLockId } from '../worktrees/landing_lock.ts';
 import { CopyMergeQueue } from '../worktrees/merge_queue.ts';
+import { chatDigest, copyLine, summaryOpening } from './fork.ts';
 import { BriefError, briefPrompt, overlaps, owned, readBrief, wrapReport } from './brief.ts';
 import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE, workspaceModeOf, workspaceModesOf } from './rules.ts';
 import { baseAgent, isServerEntry, serverIdOf } from '../agents/claude_family.ts';
@@ -62,7 +63,8 @@ const log = getLogger('swarm');
 type Json = Record<string, unknown>;
 export type Reply = [number, unknown];
 
-export const MAX_RUNNING = 3;
+/** Helpers the main agent started on its own at once, per main chat (owner 2026-11-27: 5). Helpers the user asked for (chat: true) and forks do not count. */
+export const MAX_RUNNING = 5;
 export const POLL_MS = 2000;
 /** The cleanup of merged helpers' copies is looked at this often (and at the first poll after start). */
 export const SWEEP_MS = 30_000;
@@ -201,6 +203,7 @@ const lower = (t: string) => (t ? t[0].toLowerCase() + t.slice(1) : t).replace(/
 export const helperTitle = (h: Helper) => `Helper “${h.title}” (${chatName(h)})`;
 /** A helper chat's own name: named after its job, "Fix Use-with list layout (Codex)", "… (Claude Code · strata)". */
 export const helperChatName = (h: Helper) => {
+  if (h.fork) return h.title.replace(/\s+/g, ' ').trim().slice(0, 190); // a fork is "<chat> (fork)", whatever agent it is
   const label = ` (${chatName(h)})`;
   return h.title.replace(/\s+/g, ' ').trim().slice(0, Math.max(10, 190 - label.length)) + label;
 };
@@ -404,6 +407,11 @@ export class Swarm {
     );
   }
 
+  /** The helpers that count toward `caller`'s cap: its own, started by the agent (not asked for by the user, not a fork). */
+  #capped(running: Helper[], caller: Json): Helper[] {
+    return running.filter((h) => !h.byUser && this.#isParent(h, s(caller.id), lasting(caller)));
+  }
+
   async providers(caller: Json): Promise<Json> {
     const distro = wslLoc(s(caller.projectRoot))?.distro ?? ''; // a WSL project: its agents are the distro's
     const ids = [...agentRegistry.BUILTIN_IDS, ...agentRegistry.BETA_IDS];
@@ -423,21 +431,31 @@ export class Swarm {
         ? { note: 'Entries marked modelServer run on a model server the user set up (local or private). Name one in start_helper `provider` (with `why`) for jobs that should stay local, private or cheap.' }
         : {}),
       rules: DEFAULT_RULES.map((r) => ({ job: r.job, label: r.label, provider: r.provider, model: r.model, fallback: r.fallback })),
-      caps: { running: this.#runningIn(s(caller.projectRoot)).length, max: MAX_RUNNING, project: s(caller.projectRoot) },
+      caps: { running: this.#capped(this.#runningIn(s(caller.projectRoot)), caller).length, max: MAX_RUNNING, project: s(caller.projectRoot) },
       claudeHelpers: claude,
     };
   }
 
   async startHelper(caller: Json, args: Json): Promise<Json> {
-    const { title, job, brief, provider: named, model, why } = readBrief(args);
+    const { title, job, brief, provider: named, model, why, chat: asChat } = readBrief(args);
     const project = s(caller.projectRoot);
     const distro = wslLoc(project)?.distro ?? ''; // a WSL project: the helper's worktree, landing and agent are the distro's
+    // chat: true is the user's ask for a separate chat: only while a turn the user started runs (never the agent's own work, a swarm
+    // report or merge line it was woken with, or a cycle of its own). AIB checks it; the agent's word is not taken.
+    if (asChat && caller.turnByUser !== true) {
+      throw new Refusal(
+        'not_user_turn',
+        'chat: true is only for when the user asked you for a separate chat with this helper, in the message you are answering now. ' +
+          'This turn was not started by the user: start the helper without chat (its work shows in Activity), and tell the user they can add it to their chat list.',
+      );
+    }
     const running = this.#runningIn(project);
-    if (running.length >= MAX_RUNNING) {
-      const unmerged = running.filter((h) => h.state === 'done').length;
+    const mine = this.#capped(running, caller);
+    if (!asChat && mine.length >= MAX_RUNNING) {
+      const unmerged = mine.filter((h) => h.state === 'done').length;
       throw new Refusal(
         'cap',
-        `${running.length} helpers are already running or waiting to be merged in this project (cap ${MAX_RUNNING}). ` +
+        `You already have ${mine.length} helpers running or waiting to be merged (cap ${MAX_RUNNING} from you at once; helpers the user asked for do not count). ` +
           (unmerged ? `${unmerged} finished but not merged yet: merge it with merge_helper (or stop it) to free a place. ` : '') +
           'Wait for one to finish.',
       );
@@ -493,6 +511,7 @@ export class Swarm {
       reports: [],
       merge: null,
       notes: [],
+      ...(asChat ? { listed: true, byUser: true, listedAt: this.clock() / 1000 } : {}),
     };
     await this.registry.update(id, () => record);
     // `mode` is the preferred id; `modeAnyOf` is the whole list: the connection takes the first one the agent offers, never a broader one
@@ -514,7 +533,7 @@ export class Swarm {
     await this.note(
       id,
       'swarm-start',
-      `Started helper “${title}” · ${entryLabel || providerName(picked.provider)}${picked.model ? ` · ${picked.model}` : ''} · ${pickedText}`,
+      `Started helper “${title}” · ${entryLabel || providerName(picked.provider)}${picked.model ? ` · ${picked.model}` : ''} · ${pickedText}${asChat ? ' · in your chat list' : ''}`,
       [
         'swarm-open',
       ],
@@ -530,9 +549,107 @@ export class Swarm {
       rule: picked.rule,
       skipped: picked.skipped,
       state: 'starting',
-      caps: { running: running.length + 1, max: MAX_RUNNING },
+      caps: { running: mine.length + (asChat ? 0 : 1), max: MAX_RUNNING },
+      ...(asChat ? { listed: true } : {}),
       note: 'Its report comes to this chat on its own when it finishes: do not poll helper_status.',
     };
+  }
+
+  // ---- the chat list (left-list helpers, owner 2026-11-27) ---------------------------------------------------------------------
+  /** "Add to chat list" (listed: true) and "Move to Activity list" (false): the page's button, never the agent's call. */
+  async setListed(id: unknown, listed: unknown): Promise<Reply> {
+    const h = typeof id === 'string' ? this.registry.get(id) : null;
+    if (!h || h.kind === 'subagent' || !h.chat) return [404, { ok: false, code: 'unknown_helper', error: 'No such helper' }];
+    if (typeof listed !== 'boolean') return [400, { ok: false, code: 'bad_request', error: 'listed must be true or false' }];
+    if (!!h.listed === listed) return [200, { ok: true, listed }];
+    await this.registry.patch(h.id, listed ? { listed: true, listedAt: this.clock() / 1000 } : { listed: false });
+    if (listed) await this.note(h.id, 'swarm-start', `“${h.title}” (${chatName(h)}) is in your chat list`, ['swarm-open']);
+    return [200, { ok: true, listed }];
+  }
+
+  /**
+   * "Fork this session": a helper with the same agent and its own copy of the project, named "<chat> (fork)", listed under the main
+   * chat, waiting for the user's first message. The agent copies its own session when it can (ACP session/fork: "Copy of"), else the
+   * fork starts from a written summary of the chat ("Summary of"). `id` is the chat to fork (a main chat, or a listed helper: the fork
+   * then belongs to that helper's main chat, never a helper of a helper); `title` its name as the list shows it.
+   */
+  async fork(args: unknown): Promise<Reply> {
+    try {
+      return [200, await this.#fork(obj(args))];
+    } catch (error) {
+      if (error instanceof Refusal) return [error.status, { ok: false, code: error.code, error: error.message }];
+      throw error;
+    }
+  }
+
+  async #fork(args: Json): Promise<Json> {
+    if (!swarmEnabled(this.ctx.stateDir)) {
+      throw new Refusal('swarm-off', 'Helpers from other agents are turned off. Turn them on in Settings › AIB Linking (Helpers from other agents).', 403);
+    }
+    const chatId = s(args.id);
+    if (!chatId) throw new Refusal('bad_request', 'No chat to fork', 400);
+    const src = obj(await this.ctx.host.liveState(chatId, 0).catch(() => null));
+    if (!src.id || src.closed) throw new Refusal('not_open', 'Open the chat first: only a chat that is open can be forked');
+    if (!s(src.sessionId)) throw new Refusal('not_ready', 'This chat has not started yet');
+    const from = helperOf(readHelpers(this.ctx.stateDir), { live: chatId, lasting: lasting(src), path: s(src.cwd) });
+    const caller = await this.mainChat(from ? from.parent.live : chatId);
+    const provider = s(src.provider);
+    const project = s(caller.projectRoot);
+    const distro = wslLoc(project)?.distro ?? '';
+    if (distro) {
+      const unavailable = await wslHelpersAvailable(distro);
+      if (unavailable) throw new Refusal('wsl', `This chat cannot be forked in this WSL project: ${unavailable}`);
+    }
+    if (!WORKSPACE_MODE[baseAgent(provider)]) throw new Refusal('provider_unavailable', `${providerName(provider)} cannot work in its own copy yet, so it cannot be forked`);
+    const why = this.#usable(provider) || await this.#serverDown(provider) || await this.#agentProblem(provider, distro);
+    if (why) throw new Refusal('provider_unavailable', `${providerName(provider)}: ${why}`);
+    const name = (s(args.title).replace(/\s+/g, ' ').trim() || 'Chat').slice(0, 70);
+    const title = `${name} (fork)`;
+    const mode = workspaceModeOf(provider);
+    const entryLabel = isServerEntry(provider) ? this.#entryLabel(provider) : '';
+    const id = newHelperId();
+    const record: Helper = {
+      id,
+      title,
+      project,
+      parent: { live: s(caller.id), lasting: lasting(caller) },
+      chat: { live: '', lasting: '', provider, model: '', mode, ...(entryLabel ? { label: entryLabel } : {}) },
+      brief: { ...NO_BRIEF, goal: `A fork of “${name}”: the user chats with it directly.` },
+      picked_by: 'main agent',
+      rule: 'fork',
+      why: 'forked by the user',
+      worktree: { path: '', branch: '', base: '', start: '' },
+      state: 'starting',
+      reason: '',
+      createdAt: this.clock() / 1000,
+      turnEndedAt: '',
+      cursor: 0,
+      reports: [],
+      merge: null,
+      notes: [],
+      listed: true,
+      byUser: true,
+      listedAt: this.clock() / 1000,
+      fork: { of: name, how: '', digest: chatDigest(Array.isArray(src.events) ? src.events : []) },
+    };
+    await this.registry.update(id, () => record);
+    const [code, payload] = await this.ctx.host.liveCall('connect', {
+      provider,
+      cwd: project,
+      background: true,
+      picks: { mode, modeAnyOf: [...workspaceModesOf(provider)] },
+      helperOf: { helperId: id, parent: s(caller.id) },
+      forkFrom: s(src.sessionId),
+    });
+    if (code !== 200 || !isDict(payload) || !s(payload.id)) {
+      const reason = isDict(payload) ? s(payload.error) : 'it did not start';
+      await this.#fail(id, `${entryLabel || providerName(provider)} didn't start: ${reason}`);
+      throw new Refusal(/worktree/i.test(reason) ? 'no_worktree' : 'provider_unavailable', `Could not fork: ${reason}`);
+    }
+    await this.registry.patch(id, { chat: { ...record.chat, live: s(payload.id) } });
+    await this.note(id, 'swarm-start', `Forked “${name}” into “${title}” · in your chat list`, ['swarm-open']);
+    void this.#open(id).catch((error) => log.exception(error, 'Opening fork %s failed', id));
+    return { ok: true, helper: id, chat: s(payload.id), title, listed: true };
   }
 
   /** Wait for the helper to open; then check its worktree and mode (fail closed) and send the brief as its first prompt. */
@@ -586,6 +703,21 @@ export class Swarm {
       };
       const patched = await this.registry.patch(id, { chat: { ...h.chat, mode: usedMode, lasting: lasting(state) }, worktree, cursor: Number(state.cursor) || 0 });
       if (patched) await this.#ensureName(patched);
+      if (h.fork) { // a fork waits for the user's first message: a copy of the session says so in its own chat; a summary is sent first
+        const how = s(state.forkHow) === 'copy' ? 'copy' : 'summary';
+        await this.registry.patch(id, { fork: { ...h.fork, how }, state: 'working' });
+        if (how === 'copy') {
+          await this.ctx.host.liveCall('swarm-note', { id: h.chat.live, kind: 'swarm-start', helper: id, message: copyLine(h.fork.of) }).catch(() => {});
+          return;
+        }
+        const [code, payload] = await this.ctx.host.liveCall('prompt', {
+          id: h.chat.live,
+          text: summaryOpening(h.fork.of, h.fork.digest ?? ''),
+          clientMessageId: `swarm-brief-${id}`,
+        });
+        if (code !== 200) return await this.#fail(id, `The summary could not be sent: ${s(obj(payload).error)}`);
+        return;
+      }
       const [code, payload] = await this.ctx.host.liveCall('prompt', {
         id: h.chat.live,
         text: briefPrompt(h.title, h.brief, worktree.branch),
@@ -660,9 +792,20 @@ export class Swarm {
 
   /** Stop: the helper's turn is cancelled and its work committed on its branch; its chat stays open, so it can still be merged. */
   async stop(caller: Json, which: string, reason: string): Promise<Json> {
-    const targets = which === 'all'
+    let targets = which === 'all'
       ? this.registry.all().filter((h) => this.#isParent(h, s(caller.id), lasting(caller)) && RUNNING_STATES.has(h.state))
       : [this.#mine(caller, which)];
+    // A helper in the user's chat list is theirs: it is stopped only in a turn the user started (they said yes to "close it?").
+    if (caller.turnByUser !== true) {
+      const theirs = targets.filter((h) => h.listed);
+      if (theirs.length && which !== 'all') {
+        throw new Refusal(
+          'listed',
+          `“${theirs[0].title}” is in the user's chat list. Ask the user whether to close it; stop it only after they say yes (in their next message).`,
+        );
+      }
+      targets = targets.filter((h) => !h.listed);
+    }
     const stopped: string[] = [];
     const kept: Json[] = [];
     for (const h of targets) {
@@ -2552,10 +2695,10 @@ export class Swarm {
           reason: cur.state === 'merged' ? cur.reason : asks ? 'ended on a question' : '',
           turnEndedAt: ended,
           cursor: Number(state.cursor) || cur.cursor,
-          reports: [...cur.reports, { n: cur.reports.length + 1, at: this.clock() / 1000, text, delivered: false, how: '' }],
+          reports: [...cur.reports, { n: cur.reports.length + 1, at: this.clock() / 1000, text, delivered: !!cur.fork, how: '' }],
         }
         : null);
-    await this.note(
+    if (!h.fork) await this.note(
       h.id,
       'swarm-report',
       `Report from “${h.title}” (${

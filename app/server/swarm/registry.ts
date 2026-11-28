@@ -85,6 +85,17 @@ export interface Helper {
   cleanedAt?: number;
   /** The chat's name ("<title> (<agent>)") was written to the chat names once; an owner's rename or clear is never put back. */
   named?: boolean;
+  /**
+   * Left-list helpers (owner 2026-11-27): this helper's chat is listed in the left chat list under its main chat. Set when the user
+   * asked the main agent for a chat with it (`chat: true`), when the user forked a chat, or when the user clicked "Add to chat list";
+   * cleared by "Move to Activity list". `byUser`: the user asked for it (chat: true or a fork): it does not count toward the cap.
+   */
+  listed?: boolean;
+  byUser?: boolean;
+  /** When it was listed (seconds): listed helpers show in start order and never re-sort by activity. */
+  listedAt?: number;
+  /** A fork of a chat: `of` the chat's name; `how` "copy" (the agent forked its own session) or "summary" (a written summary of the chat). */
+  fork?: { of: string; how: 'copy' | 'summary' | ''; /** the written summary, sent as the first message when the session could not be copied */ digest?: string };
   merge: null | {
     tipBefore: string;
     landed: string;
@@ -213,7 +224,7 @@ export function helperOf(
  * has no chat, so there is nothing to list. Every state counts: a helper that is done or merged stays out of the list too.
  */
 export function hiddenFromLists(h: Helper | null | undefined): boolean {
-  return !!h && isDict(h) && h.kind !== 'subagent' && isDict(h.chat);
+  return !!h && isDict(h) && h.kind !== 'subagent' && isDict(h.chat) && !h.listed;
 }
 
 /** The chats the lists leave out: their live ids and lasting names (`provider:sessionId`), from the registry file. */
