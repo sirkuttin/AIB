@@ -193,7 +193,7 @@ Deno.test({
       // the spare worktree is not listed anywhere
       assert(!(await page.eval<boolean>(`/ignored\\.txt|spare/i.test(document.getElementById('projectChanges').innerText)`)), 'a spare worktree is hidden');
       // left over: one quiet line, never a list of actions for the owner and never counted in the project's numbers
-      await page.waitFor(`!!document.querySelector('#projectChanges > .cg-left .cg-hand[data-sec="sub-left"]')`, 10000, 'the left-over line');
+      await page.waitFor(`!!document.querySelector('#projectChanges > .cg-left .cg-hand[data-sec="sub-left"]')`, 40000, 'the left-over line');
       const line = await page.eval<{ rows: number; text: string; head: boolean; sections: number; files: number }>(`(() => {
         const g = document.querySelector('#projectChanges > .cg-left'), r = g.querySelector('.cg-hand');
         return { rows: g.querySelectorAll('.cg-hand').length, text: r.innerText.replace(/\\s+/g, ' ').trim(), head: !!g.querySelector('.cg-left-head'),
@@ -222,7 +222,7 @@ Deno.test({
       await page.eval(`document.getElementById('paneTab-changes').click()`);
       await page.waitFor(`!!document.querySelector('#projectChanges > .cg-left')`, 30000, 'the left-over lines');
       // 8 stopped worktrees: 7 never landed, 1 was cherry-picked into main by hand (it is not left over)
-      await page.waitFor(`document.querySelectorAll('#projectChanges > .cg-left .cg-hand').length === 7`, 10000, 'seven lines');
+      await page.waitFor(`document.querySelectorAll('#projectChanges > .cg-left .cg-hand').length === 7`, 40000, 'seven lines');
       assertEquals(
         await page.eval<string[]>(`[...document.querySelectorAll('#projectChanges > .cg-left .cg-hand')].map((n) => n.dataset.sec)`),
         ['left-6', 'left-5', 'left-4', 'left-3', 'left-2', 'left-1', 'sub-left'],

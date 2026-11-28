@@ -14,7 +14,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { readRemotePort } from '../../app/server/remote/port.ts';
 import { DEVICE_HEADER, RateLimit } from '../../app/server/remote/pc_bridge.ts';
 import { ChatFolderCache, projectArtifacts } from '../../app/server/artifacts/project_list.ts';
-import { leftCounted, leftSignature, projectChanges } from '../../app/server/worktrees/project_changes.ts';
+import { leftCounted, leftSignature, projectChanges, settleChecks } from '../../app/server/worktrees/project_changes.ts';
 import { fakeTailscale, type FakeChat, pairPhone, pc, phoneHeaders, raw, type RemoteAib, remoteAib, serveStatus } from './_remote_fixture.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
 
@@ -141,6 +141,10 @@ Deno.test({
       };
       const args = { folder: repo, stateDir: s.state, subs: { 'sub-left': record } as never, helpers: [], fold: new Set<string>(), unfold: new Set<string>() };
       const before = leftCounted.n;
+      // a cold listing has a 700 ms budget (LISTING_BUDGET_MS): a left-over verdict git has not finished by then is kept for the next
+      // poll, so the first read may list nothing; read again once the checks have ended (the same on a slow or busy PC)
+      await projectChanges(args);
+      await settleChecks();
       const one = await projectChanges(args);
       assertEquals((one.left as Json[]).length, 1);
       assertEquals(leftCounted.n, before + 1);
@@ -151,9 +155,13 @@ Deno.test({
       await new Promise((r) => setTimeout(r, 30));
       write(`${wt}${SEP}later.txt`, 'new\n');
       await projectChanges(args);
+      await settleChecks();
+      await projectChanges(args);
       assertEquals(leftCounted.n, before + 2, 'a new file: counted again');
       git(wt, 'add', '-A');
       git(wt, 'commit', '-q', '-m', 'more');
+      await projectChanges({ ...args, subs: { 'sub-left': { ...record } } as never });
+      await settleChecks();
       const two = await projectChanges({ ...args, subs: { 'sub-left': { ...record } } as never });
       assertEquals(leftCounted.n, before + 3, 'a new HEAD: counted again');
       assertEquals(((two.left as Json[])[0].counts as Json).files, 3, 'app.txt, wt-only.txt and later.txt against the snapshot: the recount is real');

@@ -161,7 +161,7 @@ changesTest('Changes: the project folder counts every changed file, also past th
   }))()`);
   assertEquals(s, { head: '320 files +300+ −0', more: 'Show the last 20 (20 not listed yet)', badge: '320', sum: '320 files +300+ −0' });
   await page.click('#projectChanges .cg-more');
-  await page.waitFor(`document.querySelectorAll('${FILES}').length === 320 && !document.querySelector('#projectChanges .cg-more')`, 20000, 'the rest listed');
+  await page.waitFor(`document.querySelectorAll('${FILES}').length === 320 && !document.querySelector('#projectChanges .cg-more')`, 40000, 'the rest listed');
 });
 
 changesTest('Changes, split view: two chats side by side see ONE list, the project\'s, listed once', async (lab) => {
