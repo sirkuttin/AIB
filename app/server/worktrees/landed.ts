@@ -312,12 +312,15 @@ export async function refTips(repo: string, branch: string, target: string): Pro
   return { tip: ids.get(`refs/heads/${branch}`) ?? '', main: ids.get(`refs/heads/${target}`) ?? '' };
 }
 
-const memoKey = (repo: string, branch: string, target: string, title: string) => `${repo}\0${branch}\0${target}\0${title}`;
+// Keyed by the branch's TIP too: a branch made again under an old name (a slug used twice) has another tip, so it never meets the old
+// branch's verdict, however long that was kept (2026-11-27). Entries of the same branch name with another tip are dropped.
+const memoKey = (repo: string, branch: string, target: string, title: string, tip: string) => `${repo}\0${branch}\0${target}\0${title}\0${tip}`;
+const memoPrefix = (repo: string, branch: string, target: string, title: string) => `${repo}\0${branch}\0${target}\0${title}\0`;
 const squashTitle = (t: string | undefined) => (t ?? '').replace(/\s+/g, ' ').trim();
 
 /** The kept verdict for these tips, if it still holds. */
 export function memoOf(repo: string, branch: string, target: string, title: string | undefined, tips: { tip: string; main: string }): Verdict | null {
-  const m = MEMO.get(memoKey(repo, branch, target, squashTitle(title)));
+  const m = MEMO.get(memoKey(repo, branch, target, squashTitle(title), tips.tip));
   if (!m || !tips.tip || m.tip !== tips.tip) return null;
   return m.main === tips.main || m.verdict.landed ? m.verdict : null;
 }
@@ -343,7 +346,9 @@ export async function branchLanded(
   landedReads.computed++;
   const verdict = await computeLanded(repo, branch, target, options);
   if (verdict.why !== 'unknown') {
-    MEMO.set(memoKey(repo, branch, target, squashTitle(options.title)), { tip: tips.tip, main: tips.main, verdict });
+    const prefix = memoPrefix(repo, branch, target, squashTitle(options.title));
+    for (const k of [...MEMO.keys()]) if (k.startsWith(prefix)) MEMO.delete(k);
+    MEMO.set(memoKey(repo, branch, target, squashTitle(options.title), tips.tip), { tip: tips.tip, main: tips.main, verdict });
     while (MEMO.size > MEMO_MAX) MEMO.delete(MEMO.keys().next().value as string);
     saveMemo();
   }

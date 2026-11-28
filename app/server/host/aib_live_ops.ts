@@ -14,6 +14,7 @@ import { projectKey } from '../desktop/project_delete.ts';
 import { type Json, KeyError, log, need, SWARM_ACTION_LABELS, SWARM_NOTE_ACTIONS, SWARM_NOTE_KINDS } from './aib_util.ts';
 import { LANDING_TTL_MS, readHelperOf, readOwnCopy, readPicks } from './aib_options.ts';
 import type { Aib } from './aib.ts';
+import { adoptStrays } from '../subagents/strays.ts';
 
 type Reply = [number, unknown];
 export type LiveRun = (this: Aib, body: Json) => Promise<Reply> | Reply;
@@ -240,6 +241,12 @@ op('worktree-retire', false, async function () { // P4b: merged helpers' copies,
 op('subagent-release', false, async function (body) { // swarm/service.ts: a landed / empty / discarded subagent's worktree goes (P2)
   if (!this.subagents) return [404, { error: 'No subagent worktrees here' }];
   return [200, { ok: true, result: await this.subagents.release(String(need(body, 'subagent'))) }];
+});
+op('subagent-strays', false, async function (body) { // swarm/service.ts #adoptStrays: worktrees with no record are taken up (stopped), so the main agent is told
+  if (!this.subagents) return [404, { error: 'No subagent worktrees here' }];
+  const chats = (Array.isArray(body.chats) ? body.chats : []).filter(isDict).map((c) => ({ id: String(c.id ?? ''), lasting: String(c.lasting ?? '') }));
+  const made = await adoptStrays(this.subagents, this.subagents.root, (prefix) => chats.find((c) => c.id.startsWith(prefix)) ?? null);
+  return [200, { ok: true, made: made.map((r) => r.slug) }];
 });
 op('helper-end', false, async function (body) { // swarm/service.ts #endHelper: a finished helper's chat ends, so its agent and everything under it stop
   const connection = this.$connection(body);

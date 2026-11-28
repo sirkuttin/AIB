@@ -130,6 +130,10 @@ const HANDED_KINDS = new Set(['conflict', 'protected', 'failed', 'nobranch', 'ho
 /** An orphaned piece of work (its starting chat is not open) waits this long before it is handed to the project's main chat: the chat may come back (keeper, restart). */
 export const HANDOFF_ORPHAN_S = 600;
 export const LANDING_REMIND_S = 1800;
+/** A finished subagent whose landing has not happened after this long is handed to the main agent (land, diff or discard it). */
+export const LANDING_STUCK_S = 900;
+/** How often worktrees with no record are looked for. */
+export const STRAY_EVERY_S = 600;
 /** A landing that waits for the user's files to be committed is tried again this often (the files may be committed by now). */
 export const LANDING_DIRTY_RETRY_S = 300;
 /** Merge refusals a later try may not meet (git busy, the branch moving, a chat in the folder working). */
@@ -2028,8 +2032,15 @@ export class Swarm {
       const h = w.h;
       let why = '';
       if (h) {
-        if (h.landing || this.#working.has(h.id)) continue; // landing now, or waiting for its turn: its own rules
-        if (h.state === 'stopped') why = 'stopped';
+        if (this.#working.has(h.id)) continue;
+        // landing now, or waiting for its turn: its own rules, for LANDING_STUCK_S. A done subagent whose landing has waited longer
+        // (the lead chat busy for an hour, a refusal that repeats) is handed to the main agent like any other unlanded work
+        // (2026-11-27: "Fix AIB CPU load" waited unseen, the lead merged it by hand).
+        if (h.landing) {
+          if (h.landing.stage !== 'queued' || rec.state !== 'done' || this.clock() / 1000 - Math.max(h.landing.queuedAt, w.endedAt) < LANDING_STUCK_S) continue;
+          why = 'waiting';
+        } else if (h.state === 'stopped') why = 'stopped';
+        else if (h.state === 'done') why = 'done'; // ended and never queued (nothing else would ever take it up)
         else if (h.state === 'failed') why = h.sub?.kept?.length ? 'kept' : 'failed';
         // a landed one (state merged) is never handed over, even with scratch files kept in its worktree (test logs): its work is in main
       } else why = rec.state === 'stopped' ? 'stopped' : 'orphan'; // no entry: its chat was never open here (it would have been taken up at the first poll)
@@ -2115,7 +2126,8 @@ export class Swarm {
       if (told[w.id]) continue;
       const to = this.#handTo(w, chats, byLasting);
       if (!to) continue; // no chat of the project is open: it waits
-      if (orphanOf && to.own) continue; // its chat is open: the landing queue takes it up
+      // its chat is open: the landing queue takes it up, for LANDING_STUCK_S
+      if (orphanOf && to.own && (w.kind !== 'subagent' || now - w.endedAt < LANDING_STUCK_S)) continue;
       if (!to.own && now - w.endedAt < this.handoffOrphanS) continue; // its chat is closed: it may come back first
       if (!this.#seenWork.has(w.id)) {
         this.#seenWork.add(w.id);
@@ -2138,6 +2150,8 @@ export class Swarm {
           ? `${w.label} left files that did not land${count}.`
           : why === 'orphan'
           ? `${w.label} finished, but the chat that started it is gone, so its work did not land${count}.`
+          : why === 'waiting' || why === 'done'
+          ? `${w.label} finished ${Math.max(1, Math.round((now - w.endedAt) / 60))} min ago and its work has not landed yet${count}.`
           : `${w.label} did not land${count}.`;
         const text = `${what}${to.own || why === 'orphan' ? '' : ' The chat that started it is gone, so it comes to you.'} ` +
           `Land it, merge it by hand, or discard it. Call ${toolRef(s(to.chat.id), 'unlanded_work')} with work "${w.id}" and action land, diff or discard (discard needs a reason).`;
@@ -2533,6 +2547,21 @@ export class Swarm {
     await this.copyMerges.poll().catch(() => {});
   }
 
+  /** Every STRAY_EVERY_S: a subagent worktree (its branch may hold own commits) that no record names is taken up as a stopped record, so #handOff tells the main agent. */
+  #strayAt = 0;
+  async #adoptStrays(): Promise<void> {
+    const now = this.clock() / 1000;
+    this.#strayAt ||= now; // the first look is one interval after start: a record being written is never raced
+    if (now - this.#strayAt < STRAY_EVERY_S) return;
+    this.#strayAt = now;
+    const listing = obj(await this.ctx.host.liveList());
+    const chats = (Array.isArray(listing.connections) ? listing.connections : []).map(obj).filter((c) => !c.closed)
+      .map((c) => ({ id: s(c.id), lasting: lasting(c) }));
+    const [code, out] = await this.ctx.host.liveCall('subagent-strays', { chats });
+    const made = Array.isArray(obj(out).made) ? (obj(out).made as unknown[]).map(String) : [];
+    if (code === 200 && made.length) log.info('swarm: took up %d subagent worktree(s) that had no record: %s', made.length, made.join(', '));
+  }
+
   poll(): Promise<void> {
     if (this.#busy) return this.#busy;
     const run = this.#poll().catch((error) =>
@@ -2554,6 +2583,7 @@ export class Swarm {
       h.kind === 'subagent'
         ? !!h.landing || h.notes.some((n) => !n.delivered)
         : (h.state !== 'failed' && h.state !== 'discarded') || h.notes.some((n) => !n.delivered) || h.reports.some((r) => !r.delivered) || !!h.landing;
+    await this.#adoptStrays().catch((error) => log.info('swarm: looking for worktrees with no record failed (%s)', error instanceof Error ? error.message : error));
     const subs = Object.values(readSubagents(this.ctx.stateDir));
     if (!subs.length && !this.registry.all().some(pending)) return;
     const listing = obj(await this.ctx.host.liveList());

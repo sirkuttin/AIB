@@ -252,6 +252,28 @@ export function sharedRuled(chat: SubagentChat, input: Record<string, unknown>):
   return { ...input, prompt: input.prompt + SHARED_RULE_SUFFIX };
 }
 
+const SLUG_FILE = 'subagent-slugs.json';
+
+/** The highest slug number ever handed out per chat prefix (sub-<chat>): a slug is never used twice. Never throws. */
+export function readSlugLedger(stateDir: string): Record<string, number> {
+  try {
+    const [status, raw] = readJsonFile(pathOf(stateDir, SLUG_FILE));
+    if (status !== 'ok' || !isDict(raw) || !isDict(raw.high)) return {};
+    return Object.fromEntries(Object.entries(raw.high).filter(([, v]) => typeof v === 'number')) as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+function writeSlugLedger(stateDir: string, prefix: string, n: number): void {
+  try {
+    const high = readSlugLedger(stateDir);
+    if ((high[prefix] ?? 0) >= n) return;
+    high[prefix] = n;
+    saveJson(pathOf(stateDir, SLUG_FILE), { version: 1, high }, '.subagent-slugs-');
+  } catch { /* a hint: the records, refs and swarm entries still fence the numbers */ }
+}
+
 /** The file read fresh. Never throws. */
 export function readSubagents(stateDir: string): Record<string, SubagentRecord> {
   try {
@@ -1154,12 +1176,28 @@ export class SubagentWorktrees {
   /** A free slug, branch and path for the chat's next subagent worktree. */
   async #place(chat: SubagentChat): Promise<{ slug: string; branch: string; path: string }> {
     const folder = chat.subFolder || pathOf(this.root, wt.repoHash(chat.project));
+    const prefix = `sub-${chat.id.slice(0, 8)}`;
     const taken = new Set(this.all().map((r) => r.slug));
-    for (let n = 1;; n++) {
-      const slug = `sub-${chat.id.slice(0, 8)}-${n}`;
+    // A number is never used twice (2026-11-27: -30 was used by a designer run, released, then by a builder; everything keyed by the
+    // slug, branch names, studio/discarded/<slug>, refs/studio/<slug>/, ledgers and verdicts, could meet the old holder). So the next
+    // number is above every one ever handed out (a small ledger), above every record, swarm entry and ref that still names one.
+    let high = readSlugLedger(this.stateDir)[prefix] ?? 0;
+    const note = (text: string) => {
+      const m = new RegExp(`${prefix}-(\\d{1,6})(?![0-9])`).exec(text);
+      if (m) high = Math.max(high, Number(m[1]));
+    };
+    for (const r of this.all()) note(r.slug);
+    for (const h of Object.values(readHelpers(this.stateDir))) note(`${h.worktree?.branch ?? ''} ${h.worktree?.path ?? ''}`);
+    for (const pattern of [`refs/heads/studio/${prefix}-*`, `refs/studio/${prefix}-*`, `refs/heads/studio/discarded/${prefix}-*`]) {
+      const refs = await wt.git(['for-each-ref', '--format=%(refname)', pattern], chat.folder, { check: false });
+      if (refs.returncode === 0) note(refs.stdout);
+    }
+    for (let n = high + 1;; n++) {
+      const slug = `${prefix}-${n}`;
       const branch = `studio/${slug}`;
       if (taken.has(slug) || wt.lexists(pathOf(folder, slug))) continue;
       if ((await wt.git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], chat.folder, { check: false })).returncode === 0) continue;
+      writeSlugLedger(this.stateDir, prefix, n);
       return { slug, branch, path: pathOf(folder, slug) };
     }
   }

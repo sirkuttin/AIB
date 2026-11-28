@@ -18,7 +18,7 @@ import { FAKE, FAKE_UNIQUE, pause, NODE, until } from './_connection.ts';
 import { makeRepo, runGit, write } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
-import { Swarm } from '../../app/server/swarm/service.ts';
+import { LANDING_STUCK_S, STRAY_EVERY_S, Swarm } from '../../app/server/swarm/service.ts';
 import { readHandoffs } from '../../app/server/swarm/handoff.ts';
 import { pathOf } from '../../app/server/state/paths.ts';
 import { readSubagents, type SubagentRecord } from '../../app/server/subagents/service.ts';
@@ -405,5 +405,61 @@ Deno.test({
     await polls(box, 4);
     assertEquals(lines.filter((l) => l.text.includes('Clash') && l.op !== 'prompt-context').length, 1, JSON.stringify(lines));
     assertEquals(readHandoffs(box.state)[id]?.why, 'conflict', 'the failed landing wrote the ledger entry');
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'a done subagent whose landing keeps waiting is handed to the main agent after LANDING_STUCK_S (2026-11-27: it waited unseen)',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const lines = told(box);
+    const { id } = box.subagent(main.id, 'tracked.txt', 'changed by the subagent\n', 'done', { description: 'Fix CPU load', commit: true });
+    // the folder has its own uncommitted edit of the same file: the landing is refused (touched-dirty) and stays queued
+    write(box.project, 'tracked.txt', 'edited in the folder\n');
+    await polls(box, 3);
+    assert(readSubagents(box.state)[id], 'still there, not landed');
+    assertEquals(handoffLines(lines).length, 0, 'not told while the landing may still happen');
+    const t0 = Date.now();
+    box.swarm.clock = () => t0 + (LANDING_STUCK_S + 120) * 1000;
+    await polls(box, 4);
+    const sent = handoffLines(lines);
+    assertEquals(sent.length, 1, JSON.stringify(lines));
+    assertEquals(sent[0].id, main.id);
+    assert(sent[0].text.includes('Fix CPU load') && sent[0].text.includes('has not landed yet') && sent[0].text.includes(`work "${id}"`), sent[0].text);
+    const [, list] = await box.swarm.tool(main.id, 'unlanded_work', { action: 'list' });
+    assertEquals(((list as Json).items as Json[]).map((i) => i.work), [id], 'unlanded_work list shows it');
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'a subagent worktree with no record is taken up and its work is handed to the main agent (the periodic sweep)',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const lines = told(box);
+    const made = box.subagent(main.id, 'lost.txt', 'work of a lost record\n', 'done', { description: 'Lost record', commit: true });
+    Deno.writeTextFileSync(pathOf(box.state, 'subagent-worktrees.json'), JSON.stringify({ version: 1, subagents: {} })); // the record is lost
+    const prefix = main.id.slice(0, 8);
+    const path = pathOf(box.aib.subagents!.root, wt.repoHash(box.project), `sub-${prefix}-1`);
+    runGit(box.project, 'worktree', 'unlock', made.path);
+    runGit(box.project, 'worktree', 'move', made.path, path);
+    runGit(box.project, 'branch', '-m', made.branch, `studio/sub-${prefix}-1`);
+    const t0 = Date.now();
+    box.swarm.clock = () => t0;
+    await polls(box, 1); // starts the interval
+    box.swarm.clock = () => t0 + (STRAY_EVERY_S + 5) * 1000;
+    await polls(box, 1);
+    assertEquals(Object.values(readSubagents(box.state)).length, 1, 'a record was made for it');
+    box.swarm.clock = () => t0 + (STRAY_EVERY_S + 5 + 120) * 1000;
+    box.swarm.handoffOrphanS = 0;
+    await polls(box, 4);
+    const sent = handoffLines(lines);
+    assertEquals(sent.length, 1, JSON.stringify(lines));
+    assert(sent[0].text.includes('stopped before its work landed'), sent[0].text);
   },
 });
