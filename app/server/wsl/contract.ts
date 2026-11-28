@@ -349,7 +349,7 @@ export interface HelperMethods {
       config: Record<string, unknown> | null;
     };
   };
-  'subagent.event': { params: { chat: WslSubagentChat; op: string; args?: Record<string, unknown> }; result: { ok: boolean } };
+  'subagent.event': { params: { chat: WslSubagentChat; op: string; args?: Record<string, unknown> }; result: { ok: boolean; queued?: boolean } };
   'subagent.folderBranch': { params: { id: string }; result: { branch: string } };
   /** What the helper shut down (subagents/reap.ts, run natively over the distro's /proc), oldest first, at most 100. Its presence = shell tagging. */
   /** Presence only: the helper's keeper knows hook 6 (the aib-shared rule appended to Agent prompts). */

@@ -25,6 +25,8 @@ const log = getLogger('wsl_subagents');
 type Json = Record<string, unknown>;
 
 const CALL_MS = 120_000;
+/** A stream event or a read of the records: the helper answers both at once (an event is acknowledged within seconds), so a minute is a distro in trouble; AIB queues the event and tries again. */
+const EVENT_MS = 60_000;
 const LAND_MS = 600_000;
 /** Reading unlanded work (a git status, a patch or a branch name): a minute, never ten (a slow or stuck distro must not hold a poll). */
 const WORK_MS = 60_000;
@@ -237,7 +239,7 @@ async function recordsOrNull(distro: string): Promise<SubagentRecord[] | null> {
   const host = peekWslHost(distro);
   if (!host || host.state !== 'ready') return null;
   try {
-    const out = await host.call('subagent.records', {}, { timeoutMs: CALL_MS });
+    const out = await host.call('subagent.records', {}, { timeoutMs: EVENT_MS });
     return out.records.map((r) => recordWithRefs(distro, r) as unknown as SubagentRecord);
   } catch (error) {
     if (!missing(error)) log.warning('wsl: subagent records could not be read: %s', why(error));
@@ -266,7 +268,7 @@ export const wslRemote: RemoteSubagents = {
     const target = factsOfServiceChat(chat);
     if (!target) return;
     try {
-      await readyNow(target.distro).call('subagent.event', { chat: target.facts, op, args }, { timeoutMs: CALL_MS });
+      await readyNow(target.distro).call('subagent.event', { chat: target.facts, op, args }, { timeoutMs: EVENT_MS });
     } catch (error) {
       if (!missing(error)) throw error;
     }

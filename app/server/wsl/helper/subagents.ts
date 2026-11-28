@@ -24,13 +24,16 @@ import * as agySub from '../../subagents/antigravity.ts';
 import { isCodexFamily, isQwenFamily } from '../../agents/claude_family.ts';
 import { isDict } from '../../core/py.ts';
 import { onWindowsDrive } from './worktrees.ts';
-import { BAD_PARAMS, type Handlers, RpcError, str } from './rpc.ts';
+import { BAD_PARAMS, FAILED, type Handlers, RpcError, str } from './rpc.ts';
 import { ProcessReaper } from '../../subagents/reap.ts';
 import type { WslMergeAnswer, WslReap } from '../contract.ts';
+import { adoptStrays } from '../../subagents/strays.ts';
 
 type Json = Record<string, unknown>;
 
 const ID = /^[A-Za-z0-9_-]{1,200}$/;
+const EVENT_OPS = ['claudeTool', 'acpEnded', 'reconcileEnded', 'noteTask', 'turnEnded', 'turnCancelled'];
+const EVENT_QUEUE_MAX = 500;
 const CLAUDE_EVENTS = ['pre-tool', 'pre-shell', 'worktree-create', 'post-agent', 'subagent-stop'];
 const CODEX_EVENTS = ['codex-pre-tool', 'codex-subagent-start', 'codex-subagent-stop'];
 const QWEN_EVENTS = qwenSub.QWEN_HOOK_EVENTS;
@@ -107,7 +110,23 @@ class StatesHost implements merge.MergeHost {
 }
 
 /** The `subagent.*` helper methods over one SubagentWorktrees rooted in `data` (the Linux keeper's data folder). */
-export function subagentMethods(data: string): Handlers {
+export interface SubagentMethodOptions {
+  /** How long `subagent.event` waits for its own work before it answers "queued" (the work goes on, in order). */
+  eventAckMs?: number;
+  /** Tests: runs inside each event's turn in the chat's queue, before the work (a slow or stuck event). */
+  beforeEvent?: (op: string) => Promise<void> | void;
+  /** How long the records may be late for a look at worktrees with no record (that look runs in the background past it). */
+  strayWaitMs?: number;
+  /** Seconds between those looks. */
+  strayEveryS?: number;
+  /** Tests: whether something works in the worktree (default: a process whose cwd is inside it). */
+  busy?: (path: string) => boolean;
+}
+
+/** The ack of an event: its work is queued here, in order, and goes on after the answer (a distro under load answers late, never loses it). */
+const EVENT_ACK_MS = 3000;
+
+export function subagentMethods(data: string, options: SubagentMethodOptions = {}): Handlers {
   const chats = new Map<string, SubagentChat>();
   const root = new wt.Registry(data).root;
   const service = new SubagentWorktrees(data, root, (id) => chats.get(id) ?? null);
@@ -131,6 +150,55 @@ export function subagentMethods(data: string): Handlers {
     }
     chats.set(chat.id, chat);
     return chat;
+  };
+  const eventTails = new Map<string, Promise<void>>();
+  const eventDepth = new Map<string, number>();
+  const str300 = (v: unknown, max = 300) => (typeof v === 'string' ? v.slice(0, max) : '');
+  const runEvent = async (chat: SubagentChat, op: string, a: Json): Promise<void> => {
+    const s = str300;
+    switch (op) {
+      case 'claudeTool':
+        await service.claudeTool(chat.id, s(a.tool, 100), s(a.toolUseId, 200), isDict(a.input) ? a.input : {}, s(a.status, 40), s(a.agentId, 64));
+        break;
+      case 'acpEnded':
+        await service.acpEnded(chat.id, s(a.agentId, 64), a.how === null ? null : s(a.how, 40));
+        break;
+      case 'reconcileEnded': {
+        const ended = new Map<string, string>();
+        for (const row of Array.isArray(a.ended) ? a.ended.slice(0, 500) : []) {
+          if (Array.isArray(row) && typeof row[0] === 'string' && typeof row[1] === 'string') ended.set(row[0].slice(0, 64), row[1].slice(0, 40));
+        }
+        await service.reconcileEnded(chat.id, ended);
+        break;
+      }
+      case 'noteTask': // Claude Code's background task id of a call: a TaskStop of the task finds the call's processes
+        service.noteTask(chat.id, s(a.task, 200), s(a.callId, 200));
+        break;
+      case 'turnEnded':
+        await service.turnEnded(chat.id);
+        break;
+      case 'turnCancelled':
+        await service.turnCancelled(chat.id, s(a.provider, 40));
+        break;
+    }
+  };
+  // worktrees with no record are taken up (subagents/strays.ts), at most every strayEveryS, at the first look of the records too
+  let strayAt = 0;
+  let strayRun: Promise<unknown> | null = null;
+  const strays = (): Promise<unknown> => {
+    if (strayRun) return strayRun;
+    if (Date.now() / 1000 - strayAt < (options.strayEveryS ?? 60)) return Promise.resolve();
+    strayAt = Date.now() / 1000;
+    const prefixChat = (prefix: string) => {
+      const c = [...chats.values()].find((x) => x.id.startsWith(prefix));
+      return c ? { id: c.id, lasting: c.lasting } : null;
+    };
+    strayRun = adoptStrays(service, root, prefixChat, options.busy)
+      .catch((error) => console.error(`AIB-wsl-helper: looking for worktrees with no record failed (${error instanceof Error ? error.message : error})`))
+      .finally(() => {
+        strayRun = null;
+      });
+    return strayRun;
   };
   return {
     /** A worktree for the chat's next subagent: {record} (state prepared) or {deny} (why not: the cap, a project too big for a snapshot). */
@@ -342,35 +410,33 @@ export function subagentMethods(data: string): Handlers {
       const chat = remember(p.chat);
       const op = str(p, 'op');
       const a = isDict(p.args) ? p.args : {};
-      const s = (v: unknown, max = 300) => (typeof v === 'string' ? v.slice(0, max) : '');
-      switch (op) {
-        case 'claudeTool':
-          await service.claudeTool(chat.id, s(a.tool, 100), s(a.toolUseId, 200), isDict(a.input) ? a.input : {}, s(a.status, 40), s(a.agentId, 64));
-          break;
-        case 'acpEnded':
-          await service.acpEnded(chat.id, s(a.agentId, 64), a.how === null ? null : s(a.how, 40));
-          break;
-        case 'reconcileEnded': {
-          const ended = new Map<string, string>();
-          for (const row of Array.isArray(a.ended) ? a.ended.slice(0, 500) : []) {
-            if (Array.isArray(row) && typeof row[0] === 'string' && typeof row[1] === 'string') ended.set(row[0].slice(0, 64), row[1].slice(0, 40));
-          }
-          await service.reconcileEnded(chat.id, ended);
-          break;
+      if (!EVENT_OPS.includes(op)) throw new RpcError('op is not a subagent event', BAD_PARAMS);
+      // One chat's events run one after the other, in the order they came (they may not overtake each other), each in its own turn of
+      // the chat's queue: a long call of that chat (a worktree being made for a big project) holds the queue, never the helper's other
+      // calls and never the answer. The answer comes when the work is done, or after eventAckMs as "queued": AIB has then handed it
+      // over for good (a stuck call used to hold the answer for 120 s, and AIB dropped the event then).
+      const depth = (eventDepth.get(chat.id) ?? 0) + 1;
+      if (depth > EVENT_QUEUE_MAX) throw new RpcError('too many subagent events are waiting for this chat', FAILED);
+      eventDepth.set(chat.id, depth);
+      const turn = (eventTails.get(chat.id) ?? Promise.resolve()).then(async () => {
+        try {
+          await options.beforeEvent?.(op);
+          await runEvent(chat, op, a);
+        } catch (error) {
+          console.error(`AIB-wsl-helper: subagent event ${op} of ${chat.id} failed (${error instanceof Error ? error.message : error})`);
+        } finally {
+          const left = (eventDepth.get(chat.id) ?? 1) - 1;
+          if (left <= 0) {
+            eventDepth.delete(chat.id);
+            if (eventTails.get(chat.id) === turn) eventTails.delete(chat.id);
+          } else eventDepth.set(chat.id, left);
         }
-        case 'noteTask': // Claude Code's background task id of a call: a TaskStop of the task finds the call's processes
-          service.noteTask(chat.id, s(a.task, 200), s(a.callId, 200));
-          break;
-        case 'turnEnded':
-          await service.turnEnded(chat.id);
-          break;
-        case 'turnCancelled':
-          await service.turnCancelled(chat.id, s(a.provider, 40));
-          break;
-        default:
-          throw new RpcError('op is not a subagent event', BAD_PARAMS);
-      }
-      return { ok: true };
+      });
+      eventTails.set(chat.id, turn);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const queued = await Promise.race([turn.then(() => false), new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(true), options.eventAckMs ?? EVENT_ACK_MS)))]);
+      clearTimeout(timer);
+      return { ok: true, queued };
     },
 
     /** The branch the subagent's folder is on (what its work lands on), '' when the folder is on none. */
@@ -381,8 +447,13 @@ export function subagentMethods(data: string): Handlers {
     },
 
     /** The records of one chat (every chat when none is named): what AIB mirrors to track and land them. */
-    'subagent.records': (p) => {
+    'subagent.records': async (p) => {
       const chat = p.chat === undefined ? null : idOf(p.chat, 'chat');
+      if (chat === null) { // the whole list is AIB's reconcile: first a look for worktrees that have no record (a slow look goes on after the answer)
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([strays(), new Promise((resolve) => (timer = setTimeout(resolve, options.strayWaitMs ?? 15_000)))]);
+        clearTimeout(timer);
+      }
       return { records: (chat ? service.ofChat(chat) : service.all()).map((r) => ({ ...r })) };
     },
 

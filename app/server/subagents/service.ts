@@ -39,11 +39,30 @@ import { callTimeOf, preShell } from './shell_tag.ts';
 import { type ProcessReaper, recordReaped } from './reap.ts';
 import { OWN_WORK, ownWorkReason, ownWorkStuck } from './own_work.ts';
 import { markTold } from './landed_told.ts';
-import type { WslReap } from '../wsl/contract.ts';
+import { WslHelperError, type WslReap } from '../wsl/contract.ts';
 
 const log = getLogger('subagents');
 
 export const FILE = 'subagent-worktrees.json';
+
+/** A WSL chat's events still to be told to its distro (SubagentWorktrees #wslEvent). */
+interface WslQueued {
+  op: string;
+  args: Record<string, unknown>;
+  at: number;
+  tried: number;
+  sent: boolean;
+  finish: () => void;
+}
+interface WslQueue {
+  items: WslQueued[];
+  pumping: boolean;
+  wake: (() => void) | null;
+  fails: number;
+}
+/** Events that carry the whole picture each time: only the newest of them waiting in a queue matters. */
+const WSL_LATEST_WINS = new Set(['turnEnded', 'reconcileEnded', 'turnCancelled']);
+const WSL_QUEUE_MAX = 300;
 export const MAX_PER_CHAT = 8;
 /** pre-tool answers within this, well under the forwarder's 10 s deadline (P0b R2c). */
 export const PREPARE_BUDGET_MS = 8000;
@@ -293,10 +312,32 @@ export class SubagentWorktrees {
    * The distro's records, kept here as mirrors (SubagentRecord.wsl): the distro's own are replaced as a set, so a record the distro
    * dropped (landed, released) goes here too. Does nothing when the distro can't be asked (the mirror stays as it was).
    */
-  async refreshWsl(distro: string): Promise<void> {
+  refreshWsl(distro: string): Promise<void> {
+    // One read at a time per distro, and callers that arrive meanwhile share ONE more read (it must start after them): a distro under
+    // load answers slowly, and a read per event only piled calls up on it.
+    const e = this.#wslReads.get(distro) ?? { running: null, next: null };
+    this.#wslReads.set(distro, e);
+    if (!e.running) {
+      e.running = this.#refreshWsl(distro).finally(() => {
+        e.running = null;
+      });
+      return e.running;
+    }
+    e.next ??= e.running.catch(() => {}).then(() => {
+      e.next = null;
+      return this.refreshWsl(distro);
+    });
+    return e.next;
+  }
+  readonly #wslReads = new Map<string, { running: Promise<void> | null; next: Promise<void> | null }>();
+
+  async #refreshWsl(distro: string): Promise<void> {
     const records = await this.remote?.records(distro).catch(() => null);
-    if (!records) return;
-    await this.#postWslReaps(distro).catch((error) => log.warning('Could not read what the distro %s shut down: %s', distro, error));
+    if (!records) {
+      this.#wslStale.add(distro);
+      return;
+    }
+    this.#wslStale.delete(distro);
     await this.#file.run(() => {
       const all = readSubagents(this.stateDir);
       let changed = false;
@@ -313,6 +354,10 @@ export class SubagentWorktrees {
       }
       if (changed) saveJson(pathOf(this.stateDir, FILE), { version: 1, subagents: all }, '.subagent-worktrees-');
     });
+    // after the mirror is written, and never waited on for long: the reports of a distro that answers slowly must not hold the records back
+    const reaps = this.#postWslReaps(distro).catch((error) => log.warning('Could not read what the distro %s shut down: %s', distro, error));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([reaps, new Promise<void>((resolve) => (timer = setTimeout(resolve, 3000)))]).finally(() => clearTimeout(timer));
   }
 
   /** Reports of the distro already posted (by key), and when this AIB started: an older report is from before it and is not posted. */
@@ -358,12 +403,53 @@ export class SubagentWorktrees {
 
   /** Run a call in the chat's distro, then read its records back. */
   async #viaRemote<T>(chat: SubagentChat, run: (remote: RemoteSubagents) => Promise<T>): Promise<T> {
+    let ok = false;
     try {
-      return await run(this.remote!);
+      const out = await run(this.remote!);
+      ok = true;
+      return out;
     } finally {
       this.#pollWslReaps(chat.wsl!.distro);
-      await this.refreshWsl(chat.wsl!.distro).catch((error) => log.warning('Could not read the distro %s subagent records: %s', chat.wsl!.distro, error));
+      const read = this.refreshWsl(chat.wsl!.distro).catch((error) => log.warning('Could not read the distro %s subagent records: %s', chat.wsl!.distro, error));
+      if (ok) await read; // a call that failed leaves the distro to the periodic look: nothing here waits on a distro that does not answer
     }
+  }
+
+  // ---- a WSL chat's stream events: queued per chat, in order, retried until the distro has them --------------------------------
+  // (owner 2026-11-28: under 11 busy cores the distro's helper answered subagent.event after 120 s; the event was dropped, the
+  // subagents never reached AIB's records and were lost track of.) An event is only dropped once the distro answered, or it is old.
+
+  /** How long the caller of an event waits for its delivery (a turn end must not hang on a busy distro); it goes on in the background. */
+  wslEventWaitMs = 5000;
+  /** Pauses between tries of the event at the head of a chat's queue (the last one repeats). */
+  wslRetryMs: number[] = [2000, 5000, 15_000, 30_000];
+  /** An event this old is dropped (the stream's own reconcile at the next turn end and on recovery says the same again). */
+  wslEventMaxAgeMs = 30 * 60_000;
+  readonly #wslQueues = new Map<string, WslQueue>();
+  readonly #wslDistros = new Set<string>();
+  /** Distros whose last record read or event failed: what AIB shows of their subagents may lag ("syncing"). */
+  readonly #wslStale = new Set<string>();
+  readonly #wslDown = new Set<string>();
+
+  #wslQueueOf(chatId: string): WslQueue {
+    let q = this.#wslQueues.get(chatId);
+    if (!q) this.#wslQueues.set(chatId, q = { items: [], pumping: false, wake: null, fails: 0 });
+    return q;
+  }
+
+  /** Events of the chat not yet delivered to its distro. */
+  wslPending(chatId: string): number {
+    return this.#wslQueues.get(chatId)?.items.length ?? 0;
+  }
+
+  /**
+   * The chat's subagent list may lag what its distro knows: events wait to be delivered, or the distro's records could not be read
+   * (Activity says "syncing" for a subagent the stream shows and no record names yet, never "not isolated").
+   */
+  syncing(chatId: string): boolean {
+    const chat = this.chat(chatId);
+    if (!chat?.wsl) return false;
+    return this.wslPending(chatId) > 0 || this.#wslStale.has(chat.wsl.distro);
   }
 
   /** A WSL chat's stream event, handed to its distro (the chat is open here; its records follow). */
@@ -371,12 +457,143 @@ export class SubagentWorktrees {
     const chat = this.chat(chatId);
     if (!chat?.wsl) return false;
     if (!this.remote || !chat.hooks) return true; // nothing to tell: no hooks were given, or no distro side
-    try {
-      await this.#viaRemote(chat, (r) => r.event(chat, op, args));
-    } catch (error) {
-      log.warning('wsl: subagent event %s of %s was not delivered: %s', op, chatId, error instanceof Error ? error.message : error);
+    this.#wslDistros.add(chat.wsl.distro);
+    const q = this.#wslQueueOf(chatId);
+    let finish!: () => void;
+    const delivered = new Promise<void>((resolve) => (finish = resolve));
+    // the latest word of these says it all (each carries the whole picture): older ones still waiting (not being sent) are replaced
+    if (WSL_LATEST_WINS.has(op)) {
+      q.items = q.items.filter((x) => {
+        const keep = x.op !== op || x.sent;
+        if (!keep) x.finish();
+        return keep;
+      });
     }
+    q.items.push({ op, args, at: Date.now(), tried: 0, sent: false, finish });
+    while (q.items.length > WSL_QUEUE_MAX) { // bounded
+      // the oldest note of a task goes first, then the oldest call or end (never the head being sent, never the newest picture)
+      const at = q.items.findIndex((x, i) => i > 0 && x.op === 'noteTask');
+      const old = at > 0 ? at : q.items.findIndex((x, i) => i > 0 && !WSL_LATEST_WINS.has(x.op));
+      const [gone] = q.items.splice(old > 0 ? old : 1, 1);
+      log.warning('wsl: subagent event %s of %s was dropped: the distro has not taken %d events', gone.op, chatId, WSL_QUEUE_MAX);
+      gone.finish();
+    }
+    void this.#pumpWsl(chatId);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, this.wslEventWaitMs)));
+    await Promise.race([delivered, waited]).finally(() => clearTimeout(timer));
     return true;
+  }
+
+  /** Delivers the chat's queued events one at a time, in order; the head waits and tries again until the distro takes it. */
+  async #pumpWsl(chatId: string): Promise<void> {
+    const q = this.#wslQueueOf(chatId);
+    if (q.pumping) return;
+    q.pumping = true;
+    try {
+      while (q.items.length) {
+        const item = q.items[0];
+        const chat = this.chat(chatId);
+        if (!chat?.wsl || !this.remote) { // the chat is closed here: nothing is left to tell its distro
+          for (const x of q.items.splice(0)) x.finish();
+          break;
+        }
+        if (Date.now() - item.at > this.wslEventMaxAgeMs) {
+          log.warning('wsl: subagent event %s of %s was given up after %d min', item.op, chatId, Math.round(this.wslEventMaxAgeMs / 60_000));
+          q.items.shift();
+          item.finish();
+          continue;
+        }
+        item.tried++;
+        item.sent = true;
+        try {
+          await this.#viaRemote(chat, (r) => r.event(chat, item.op, item.args));
+          q.items.shift();
+          item.finish();
+          q.fails = 0;
+          if (!q.items.length) this.#wslStale.delete(chat.wsl.distro);
+        } catch (error) {
+          item.sent = false;
+          const why = error instanceof Error ? error.message : String(error);
+          if (error instanceof WslHelperError && (error.code === '-32602' || error.code === '-32601')) { // refused as malformed: again would say the same
+            log.warning('wsl: subagent event %s of %s was refused by the distro: %s', item.op, chatId, why);
+            q.items.shift();
+            item.finish();
+            continue;
+          }
+          this.#wslStale.add(chat.wsl.distro);
+          const pause = this.wslRetryMs[Math.min(q.fails++, this.wslRetryMs.length - 1)] ?? 5000;
+          if (q.fails <= 1 || q.fails % 10 === 0) {
+            log.warning('wsl: subagent event %s of %s was not delivered (%d waiting, again in %d s): %s', item.op, chatId, q.items.length, pause / 1000, why);
+          }
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, pause);
+            Deno.unrefTimer(timer as unknown as number);
+            q.wake = () => {
+              clearTimeout(timer);
+              resolve();
+            };
+          });
+          q.wake = null;
+        }
+      }
+    } finally {
+      q.pumping = false;
+      if (!q.items.length) this.#wslQueues.delete(chatId);
+    }
+  }
+
+  /** The distro answers again (or a periodic look found it so): events that waited try now. */
+  #kickWsl(distro: string): void {
+    for (const [id, q] of this.#wslQueues) if (this.chat(id)?.wsl?.distro === distro) q.wake?.();
+  }
+
+  /** Called once a distro that could not be read before can be (AIB sets it: it resends what the open chats' streams say of their subagents). */
+  onWslRecovered: ((distro: string) => void) | null = null;
+
+  /**
+   * Looks at every distro AIB has WSL subagents for, now and every `everyMs`: the records are read again (so a subagent the events
+   * never told about still shows, and one the distro finished is settled), the waiting events try again, and a distro that was
+   * unreachable and is back gets the open chats' stream state again (`onWslRecovered`). Returns the function that stops it.
+   */
+  watchWsl(everyMs = 30_000): () => void {
+    let running = false;
+    const tick = async () => {
+      if (running) return;
+      running = true;
+      try {
+        await this.reconcileWsl();
+      } catch (error) {
+        log.warning('wsl: looking at the distros subagents failed: %s', error instanceof Error ? error.message : error);
+      } finally {
+        running = false;
+      }
+    };
+    const timer = setInterval(() => void tick(), everyMs);
+    Deno.unrefTimer(timer as unknown as number);
+    return () => clearInterval(timer);
+  }
+
+  async reconcileWsl(): Promise<void> {
+    const distros = new Set(this.#wslDistros);
+    for (const r of this.all()) if (r.wsl) distros.add(r.wsl.distro);
+    for (const distro of distros) {
+      const wasDown = this.#wslStale.has(distro) || this.#wslDown.has(distro);
+      await this.refreshWsl(distro).catch(() => {});
+      if (this.#wslStale.has(distro)) {
+        this.#wslDown.add(distro);
+        continue;
+      }
+      this.#kickWsl(distro);
+      if (wasDown) {
+        this.#wslDown.delete(distro);
+        try {
+          this.onWslRecovered?.(distro);
+        } catch (error) {
+          log.exception(error, 'Resending what the streams say of their subagents to %s failed', distro);
+        }
+      }
+    }
   }
 
   readonly #ownMemo = new Map<string, { at: number; n: number; run: Promise<void> | null }>();
@@ -411,6 +628,11 @@ export class SubagentWorktrees {
 
   ofChat(chatId: string): SubagentRecord[] {
     return this.all().filter((r) => r.chat === chatId);
+  }
+
+  /** A record made from outside the hooks (strays.ts: a worktree found with no record). Never replaces one. */
+  async addRecord(rec: SubagentRecord): Promise<SubagentRecord> {
+    return (await this.#update(rec.id, (cur) => cur ?? rec))!;
   }
 
   #update(id: string, change: (r: SubagentRecord | null) => SubagentRecord | null): Promise<SubagentRecord | null> {

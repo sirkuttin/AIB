@@ -69,6 +69,20 @@ function hasMusl(): boolean {
   }
 }
 
+/**
+ * The helper answers AIB while the distro's cores are busy with something else (a game build used 11 cores: its calls took minutes).
+ * A better scheduling priority than the busy work's helps, and only what the system allows without root is tried: a lower nice
+ * value is refused for a normal user (the answer is ignored, nothing else changes). Never throws, never waits for the answer.
+ */
+async function betterPriority(): Promise<void> {
+  const stat = Deno.readTextFileSync('/proc/self/stat');
+  const nice = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[16]); // field 19: nice
+  if (!Number.isFinite(nice)) return;
+  const want = nice > 0 ? 0 : -5;
+  const out = await new Deno.Command('renice', { args: ['-n', String(want), '-p', String(Deno.pid)], stdin: 'null', stdout: 'null', stderr: 'null' }).output();
+  if (out.code !== 0) console.error(`AIB-wsl-helper: kept its scheduling priority (nice ${nice}): the system does not allow a better one without root`);
+}
+
 function uid(): number | null {
   try {
     return Deno.uid(); // --allow-sys=uid; /proc itself needs --allow-all in Deno
@@ -254,6 +268,7 @@ async function helperMain(args: string[]): Promise<number> {
     const keep = exeDir.slice(exeDir.lastIndexOf('/') + 1);
     setTimeout(() => void cleanOldVersions(root, keep, Deno.execPath()).catch(() => {}), 30_000);
   }
+  if (COMPILED && base.AIB_WSL_NO_RENICE !== '1') void betterPriority().catch(() => {});
   await send({
     jsonrpc: '2.0',
     method: 'helper.ready',

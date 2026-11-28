@@ -192,6 +192,7 @@ export class Aib {
   readonly #probes = new Map<string, Promise<void>>();
   readonly #probeFailed = new Map<string, number>();
   #heartbeat: ReturnType<typeof setInterval> | null = null;
+  #stopWslWatch: (() => void) | null = null;
   #limitsTimer: ReturnType<typeof setInterval> | null = null;
   $closed = false;
   /** Agents run in the keeper and chats are rebuilt from its record after a restart; null: agents are children. */
@@ -285,6 +286,17 @@ export class Aib {
     const subagents = manager ? new SubagentWorktrees(this.stateDir, manager.registry.root, (id) => this.$subagentChat(id)) : null;
     this.subagents = subagents;
     if (subagents) subagents.remote = wslRemote; // a WSL chat's subagents are made, kept and landed by its distro's helper
+    if (subagents) {
+      // the distro's records are read again now and then, waiting events try again, and a distro that was out of reach and is back
+      // gets what each open Claude chat's stream says of its subagents again (an event told while it was away may have been lost)
+      subagents.onWslRecovered = (distro) => {
+        for (const c of this.connections.values()) {
+          if (c.closed || c.wsl?.distro !== distro || !isClaudeFamily(c.provider)) continue;
+          void subagents.reconcileEnded(c.id, c.endedSubagents()).catch((error) => log.exception(error, 'Subagent recovery check failed'));
+        }
+      };
+      this.#stopWslWatch = subagents.watchWsl(construct.wslSubagentsEveryMs);
+    }
     if (subagents) { // a finished subagent's processes are shut down by their shell cookie (subagents/reap.ts); the parent gets one line
       subagents.reaper = new ProcessReaper();
       subagents.onReaped = (chatId, rec, killed) => {
@@ -1266,6 +1278,7 @@ export class Aib {
     if (this.$closed) return;
     this.$closed = true;
     this.#untunnel?.();
+    this.#stopWslWatch?.();
     this.handoff.close();
     if (this.deliberateStop && this.store) {
       for (const c of this.connections.values()) {

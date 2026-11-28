@@ -374,6 +374,11 @@ export class Connection {
 
   /** Subagent worktrees P3: Activity's words per subagent by agentId ({where, landing}); set by AIB. */
   subagentActivity: (() => Record<string, unknown>) | null = null;
+  /**
+   * A WSL chat whose subagent bookkeeping in its distro lags (events waiting, records not readable): Activity still lists the subagents
+   * the stream shows, and says "syncing" for their worktree instead of "not isolated". Set by AIB.
+   */
+  subagentSyncing: (() => boolean) | null = null;
   #subagentActivitySafe(): Record<string, unknown> {
     try {
       return this.subagentActivity!();
@@ -1473,6 +1478,7 @@ export class Connection {
       ...(this.subagentHooks
         ? {
           subagentIsolation: { on: this.subagentIsolationOn(), reason: this.subagentHooks.off, readOnly: this.subagentHooks.readOnly },
+          ...(this.subagentSyncing?.() ? { subagentSync: true } : {}),
           ...(this.subagents.size && this.subagentActivity ? { subagentWorktrees: this.#subagentActivitySafe() } : {}),
         }
         : this.geminiSubagents

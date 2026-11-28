@@ -408,6 +408,9 @@
     const type = str(a && a.agentType);
     if (type && Array.isArray(iso.readOnly) && iso.readOnly.includes(type)) return { where: READ_ONLY_WHERE, landing: '' };
     if (!iso.on) return { where: 'Not isolated: ' + (str(iso.reason) || 'hooks are off'), landing: '' };
+    /* A WSL chat whose distro has not told AIB about its worktrees yet (events waiting, or its records not readable): the subagent is
+       there (the chat's own stream shows it) and its worktree is being looked up, which is not "not isolated". */
+    if (iso.syncing) return { where: 'Syncing its worktree…', landing: '' };
     const c = classify(a || {});
     const age = now && Number(a && a.created) ? now - Number(a.created) : 0;
     if (c.group === 'working' && a.live && type && age > 8)
@@ -786,6 +789,66 @@
           break;
         }
   }
+  /* Agent / Task calls of the chat's own stream that no live child accounts for: a subagent the main agent started shows in Activity
+     from its call alone (what AIB's own bookkeeping of its worktree may still lack: a WSL distro that answers late). `children`: the
+     chat's live children (key -> row). Rows: {key, name, description, agentType, live, created, state, launched} - state 'running'
+     while the call has not returned, 'completed' / 'failed' after. */
+  function launched(events, mainSid, children) {
+    const kids = children && typeof children.values === 'function' ? [...children.values()] : [];
+    const linked = new Set(), // tool call ids some child is tied to
+      calls = new Map(); // tool call id -> the call
+    for (const e of events || []) {
+      if (!e || e.kind !== 'update' || !e.data) continue;
+      const u = e.data.update || {},
+        kind = u.sessionUpdate,
+        sid = e.data.sessionId,
+        cc = (u._meta && u._meta.claudeCode) || {};
+      if (kind === 'subagent_update') {
+        const sub = u.subagent && typeof u.subagent === 'object' ? u.subagent : u,
+          scc = (sub._meta && sub._meta.claudeCode) || {};
+        for (const use of [sub.toolCallId, sub.toolUseId, scc.toolUseId, scc.parentToolUseId]) if (str(use)) linked.add(str(use));
+        continue;
+      }
+      if (kind === 'session_message') {
+        if (str(u.messageId)) linked.add(str(u.messageId));
+        continue;
+      }
+      if (sid && mainSid && sid !== mainSid) {
+        if (str(cc.parentToolUseId)) linked.add(str(cc.parentToolUseId));
+        continue;
+      }
+      if ((kind !== 'tool_call' && kind !== 'tool_call_update') || str(cc.parentToolUseId) || !/^(agent|task)$/i.test(str(cc.toolName))) continue;
+      const id = str(u.toolCallId);
+      if (!id) continue;
+      const call = calls.get(id) || { id, input: {}, status: '', agentId: '', time: e.time || 0 };
+      if (u.rawInput && typeof u.rawInput === 'object' && Object.keys(u.rawInput).length) call.input = u.rawInput;
+      if (str(u.status)) call.status = str(u.status);
+      const agentId = cc.toolResponse && str(cc.toolResponse.agentId);
+      if (agentId) call.agentId = agentId;
+      calls.set(id, call);
+    }
+    const have = new Set(kids.map((k) => first(k.description) || first(k.name)).filter(Boolean));
+    const out = [];
+    for (const call of calls.values()) {
+      if (linked.has(call.id) || (call.agentId && children && children.has(call.agentId))) continue;
+      const name = first(call.input.description) || first(call.input.prompt) || 'Subagent';
+      if (have.has(name)) continue;
+      have.add(name);
+      out.push({
+        key: 'launch:' + call.id,
+        name,
+        description: name,
+        capabilities: {},
+        live: true,
+        created: call.time,
+        since: call.time,
+        state: call.status === 'failed' ? 'failed' : call.status === 'completed' ? 'completed' : 'running',
+        agentType: str(call.input.subagent_type),
+        launched: true,
+      });
+    }
+    return out;
+  }
   /* Live-child bookkeeping used by chat.js collectChildren. */
   function enrich(next, old, child, time) {
     const t = typeof child.title === 'string' && child.title.trim() ? child.title.trim() : '';
@@ -812,6 +875,7 @@
     render,
     folded: (convKey, openDefault) => !expanded(convKey, openDefault), // is this chat's "N finished" fold closed (the Activity diff reads it)
     enrich,
+    launched,
     noteEvent,
     span,
     stateText,

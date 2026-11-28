@@ -381,6 +381,7 @@ export const connectMethods = {
         void subagents.claudeTool(conn.id, tool, toolUseId, input, status, agentId).catch((error) => log.exception(error, 'Subagent tool update failed'));
       };
       c.subagentActivity = () => subagents.activity(c.id);
+      c.subagentSyncing = () => subagents.syncing(c.id);
       c.onBackgroundTask = (conn, task, callId) => subagents.noteTask(conn.id, task, callId);
       c.ownRuns = (conn) => subagents.ownWaiting(conn.id);
       c.onSubagentEnded = (conn, agentId, how) => {

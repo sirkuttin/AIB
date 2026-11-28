@@ -119,6 +119,8 @@ export interface AibConstruct {
   stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
   /** How often the usage checker runs on its own for the open chats, in ms (tests pass a short one). Default REFRESH_SECONDS. */
   limitsEveryMs?: number;
+  /** How often the WSL distros' subagent records are read again and waiting events retried, in ms (tests pass a short one). Default 30 s. */
+  wslSubagentsEveryMs?: number;
 }
 
 export const defaultFactory: ConnectionFactory = (command, cwd, provider, options) => new Connection(command, cwd, provider, options ?? {});

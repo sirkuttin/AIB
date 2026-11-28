@@ -2779,9 +2779,12 @@
           agentType: c.agentType || d.agentType || '',
         });
       }
+    /* A subagent the stream shows only as an Agent call (no child session reported yet, or AIB's own list of it lags): still a row. */
+    for (const k of [...children.keys()]) if (k.startsWith('launch:')) children.delete(k); // made again below, until a child takes its call
+    for (const row of window.SubagentsUI?.launched?.(cache.loaded(), snapshot.sessionId, children) || []) children.set(row.key, row);
     /* Subagent worktrees (P3): each card's fixed line, where it works and how its work lands (a child's session id is its agentId).
        The same for a split view's chats: each is collected here with its own snapshot. */
-    const iso = snapshot.subagentIsolation,
+    const iso = snapshot.subagentIsolation && snapshot.subagentSync ? { ...snapshot.subagentIsolation, syncing: true } : snapshot.subagentIsolation,
       wtInfo = snapshot.subagentWorktrees || {};
     if (iso && window.SubagentsUI?.worktreeWords) {
       const now = Date.now() / 1000;
