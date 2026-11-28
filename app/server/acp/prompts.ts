@@ -21,9 +21,17 @@ export const COMMANDS_RULE =
   "pastes it into the chat's terminal without running it. Write the explanation outside the block. You cannot type a password, so " +
   'never run a command that needs sudo yourself: give it to the user in such a block, and carry on once they say it is done.';
 
+/**
+ * Which kind of helper to start (owner 2026-11-28): a main agent used its own built-in subagents for "design lead, tech lead" and
+ * the user never saw them. In the prompt of every chat with AIB's tools and in the `helper` tool's description.
+ */
+export const HELPER_RULE = 'If you have the `helper` tool and the user asks for helpers, leads, team members or agents they can see or talk to, ' +
+  'start them with `helper` (action start) and `chat: true`: they appear under this chat in the user\'s chat list. ' +
+  'Use your own built-in subagents only for internal side jobs the user did not ask to see.';
+
 export const ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
-  'mean this viewer and its studio_artifact tool (the doc tool is mcp__studio_artifact__doc where MCP tool names are prefixed). ' + DOCS_RULE + ' When you make something else the user ' +
+  'mean this viewer and its studio_artifact tool (the doc tool is mcp__studio_artifact__doc where MCP tool names are prefixed). ' + DOCS_RULE + ' ' + HELPER_RULE + ' When you make something else the user ' +
   'should look at rather than source code (an HTML page, one-off report, chart, diagram, SVG or image), ' +
   "save its file under the project's outputs/ folder (for example outputs/report.html), never in the project root " +
   'or among source files, then publish it with the `publish` tool (pass a file path or the content) and mention it in your reply ' +
@@ -38,7 +46,7 @@ export const ARTIFACT_PROMPT =
  */
 export const WSL_ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
-  'mean this viewer and its studio_artifact tool. This project is in WSL. When you make something the user should look at rather ' +
+  'mean this viewer and its studio_artifact tool. ' + HELPER_RULE + ' This project is in WSL. When you make something the user should look at rather ' +
   'than source code (an HTML page, one-off report, chart, diagram, SVG, image or PDF), publish it with the `publish` ' +
   'tool, by its content or by its Linux `path` (relative to the chat folder, or absolute inside the chat or project folder; any ' +
   'kind up to 25 MB, PNG and other images included), and mention it in your reply as the Markdown link the tool returns. AIB copies ' +

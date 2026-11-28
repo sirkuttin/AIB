@@ -11,6 +11,8 @@ import { artifactToolCommand, INSTRUCTIONS, OFFLINE_LIBS_NOTE } from '../../app/
 import { Aib } from '../../app/server/host/aib.ts';
 import { ARTIFACT_URL_FILE } from '../../app/server/host/aib.ts';
 import { ARTIFACT_PROMPT, COMMANDS_RULE, Connection, WSL_ARTIFACT_PROMPT } from '../../app/server/acp/connection.ts';
+import { HELPER_RULE } from '../../app/server/acp/prompts.ts';
+import { consolidatedTools } from '../../app/server/artifacts/mcp_tools.ts';
 import { selectMcpServers, validateMcpServers } from '../../app/server/acp/breadth.ts';
 import { ArtifactMcpHttp, CONVERSATION_HEADER, KEY_HEADER } from '../../app/server/artifacts/mcp_http.ts';
 import { DOC_TOOL_NAMES, DOCS_RULE } from '../../app/server/docs/tool_defs.ts';
@@ -775,6 +777,20 @@ Deno.test('artifact prompt: an empty systemPrompt capability counts (codex-acp a
     const caps = { agentCapabilities: { sessionCapabilities: { systemPrompt: absent } } };
     assertEquals(connection(caps).artifactPrompt(own), {}, JSON.stringify(absent));
   }
+});
+
+Deno.test('helper rule: in the prompt of every provider that gets AIB tools, and in the helper tool description', () => {
+  for (const provider of ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'antigravity', 'maki']) {
+    const own = [{ name: 'studio_artifact', ...artifactToolCommand() }];
+    const c = new Connection([`${TESTS_DIR}${SEP}combined-fixture${SEP}agent.mjs`], Deno.cwd(), provider, { start: false } as never);
+    c.initial = ADVERTISED;
+    const text = (((c.artifactPrompt(own) as Json).systemPrompt as Json).content as Json[])[0].text as string;
+    assert(text.includes(HELPER_RULE), provider);
+  }
+  assert(HELPER_RULE.includes('chat: true') && HELPER_RULE.includes('built-in subagents') && HELPER_RULE.includes('chat list'));
+  assert(ARTIFACT_PROMPT.includes(HELPER_RULE) && WSL_ARTIFACT_PROMPT.includes(HELPER_RULE));
+  const helper = consolidatedTools({ main: true }, { artifacts: true, merge: true, swarm: true, docs: true }).find((t) => t.name === 'helper')!;
+  assert(String(helper.description).includes(HELPER_RULE));
 });
 
 Deno.test('artifact prompt: not sent otherwise', () => {

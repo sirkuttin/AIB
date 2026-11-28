@@ -446,7 +446,8 @@ export class Swarm {
       throw new Refusal(
         'not_user_turn',
         'chat: true is only for when the user asked you for a separate chat with this helper, in the message you are answering now. ' +
-          'This turn was not started by the user: start the helper without chat (its work shows in Activity), and tell the user they can add it to their chat list.',
+          'This turn was not started by the user: start the helper without chat (its work shows in Activity), and tell the user they can add it to their chat list. ' +
+          'When the user next asks for helpers they can see, start them then with chat: true.',
       );
     }
     const running = this.#runningIn(project);

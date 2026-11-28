@@ -113,6 +113,7 @@ Deno.test({
     const refused = await stub.start({ chat: true });
     assertEquals(refused.code, 'not_user_turn');
     assert(String(refused.error).includes('not started by the user'), String(refused.error));
+    assert(String(refused.error).includes('next asks for helpers they can see, start them then with chat: true'), 'says what to do: ' + refused.error);
     assertEquals(stub.swarm.registry.all().length, 0, 'nothing was started');
     stub.userTurn(true);
     const ok = await stub.start({ chat: true });
