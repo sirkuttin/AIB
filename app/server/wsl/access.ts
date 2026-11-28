@@ -10,6 +10,7 @@ import { wslHosts, wslHostsInUse } from './hosts.ts';
 import { detectWsl, type WslDistro } from './detect.ts';
 import { locOf } from '../platform/location.ts';
 import { ValueError } from '../core/py.ts';
+import { clearMemos } from '../core/memo.ts';
 import { urlGate } from './open_urls.ts';
 import { mcpTunnelGate } from './mcp_tunnel.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
@@ -28,12 +29,14 @@ const watched = new WeakSet<WslHost>();
 /** Tests: where wslHost() gets its hosts (null: Track B's registry). */
 export function setWslHostResolver(fn: Resolver | null): void {
   resolver = fn;
+  clearMemos(); // the kept WSL status answer (web/wsl_routes.ts) belongs to the old hosts
 }
 
 /** Tests: where wsl2Distros() gets the distro list (null: wsl/detect.ts). */
 export function setDistroSource(fn: (() => Promise<DistroInfo[]>) | null): void {
   distroSource = fn;
   names.clear();
+  clearMemos();
 }
 
 /** {distro, linuxPath} of a WSL ref, or null for a Windows path. The distro is the folded key the ref holds. */

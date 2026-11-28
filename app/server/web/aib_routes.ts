@@ -4,6 +4,7 @@
  * a paused live sync included), the update routes, and the artifact routes with their own gate order (the agent key is checked after
  * the body is read). Payloads and messages are fixed.
  */
+import { Memo } from '../core/memo.ts';
 import { isDict, ValueError } from '../core/py.ts';
 import { conversationAction, modelServersView, settingsView, type AibContext } from './shared.ts';
 import { cleanServerUrl, inspectModelServer, isLoopbackAddress, serverHealth, WSL_LOOPBACK_NOTE } from '../agents/model_servers.ts';
@@ -134,6 +135,8 @@ export function forgetWorktreeStatus(id: unknown): void {
 }
 
 const changesRuns = new Map<string, Promise<Reply>>();
+/** The right panel's Changes read (git over the project and its worktrees): every window and chat of a project asks it; one run answers them for 1.5 s. */
+const projectChangesMemo = new Memo<Reply>(1500);
 
 /** One run for identical concurrent requests: the first starts it, the rest wait for the same answer. */
 export function shared<T>(runs: Map<string, Promise<T>>, key: string, run: () => Promise<T>): Promise<T> {
@@ -382,7 +385,7 @@ export function aibRoutes(): Map<string, AibHandler> {
   for (const path of ['/api/live/project/changes', '/api/live/project/changes/file']) {
     routes.set(`GET ${path}`, (ctx, url, _body, request, principal) => {
       const who = principal?.kind === REMOTE_PC ? `pc:${principal.device}` : request.headers.get('X-Studio-Token') ?? '';
-      return shared(changesRuns, `${who}|${path}|${url.search}`, async () => {
+      return projectChangesMemo.get(`${who}|${path}|${url.search}`, async () => {
         const args = argsOf(url);
         const aib = chatAibOf(ctx, await savedFolders(ctx, one(args, 'id')));
         if (!pageAllowed(principal ?? null, request.headers, aib.token ?? '')) {

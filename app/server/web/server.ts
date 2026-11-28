@@ -61,10 +61,24 @@ import { pcsyncRoutes } from './pcsync_routes.ts';
 import { PcSync, type PcSyncOptions } from '../pcsync/service.ts';
 import { sourceProjects } from '../pcsync/projects.ts';
 import { PageAccess } from './page_access.ts';
+import { clearMemos } from '../core/memo.ts';
 import { type DesktopWindows, MAX_WINDOWS_BODY, WINDOW_ID } from '../desktop/windows_contract.ts';
 import { WindowsRoute } from './windows_route.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
+/** The page's conditional polls (the page's CONDITIONAL list in chat.js): their JSON answers carry an ETag. */
+const ETAG_PATHS = /^\/api\/(sessions|commands|agents|live\/(docs\/list|files\/list|wsl\/status|project\/changes|list|swarm|ownership))$/;
+async function etagOf(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', bytes as Uint8Array<ArrayBuffer>));
+  return `"${[...digest.slice(0, 12)].map((b) => b.toString(16).padStart(2, '0')).join('')}"`;
+}
+/** If-None-Match holds this tag (a list of tags, or *; a weak prefix is ignored). */
+function matchesEtag(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  return header.split(',').some((t) => t.trim().replace(/^W\//, '') === etag || t.trim() === '*');
+}
+/** POSTs that change nothing a listing shows (heartbeats, read marks, window lists, logs): they keep the poll answers. */
+const QUIET_POSTS = /^\/api\/live\/(presence|read-state|desktop\/windows|log|heartbeat|attention|view-prefs|projects\/prefs|settings\/|notify)/;
 const WEB_STARTED = Date.now() / 1000;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 const ASSET_NAME = /^\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
@@ -587,7 +601,30 @@ export class WebServer {
     });
   }
 
+  /**
+   * Every request. A GET poll the page asks conditionally (ETAG_PATHS) is answered with an ETag of its body, and with 304 and no body
+   * when the page already holds exactly that (If-None-Match): a poll that finds nothing new costs a header, not the list again.
+   */
   async handle(request: Request): Promise<Response> {
+    const response = await this.#handle(request);
+    if (request.method !== 'GET' || response.status !== 200 || !response.body) return response;
+    const path = new URL(request.url).pathname;
+    if (!ETAG_PATHS.test(path) || !(response.headers.get('Content-Type') ?? '').startsWith('application/json')) return response;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    // the answers of the transcript viewer end with the server's clock ("now"); the page never reads it, and it must not make every answer new
+    const text = new TextDecoder().decode(bytes);
+    const steady = /,"now":[0-9.eE+-]+\}$/.test(text) ? new TextEncoder().encode(text.replace(/,"now":[0-9.eE+-]+\}$/, '}')) : bytes;
+    const etag = await etagOf(steady);
+    const headers = new Headers(response.headers);
+    headers.set('ETag', etag);
+    if (matchesEtag(request.headers.get('If-None-Match'), etag)) {
+      headers.delete('Content-Type');
+      return new Response(null, { status: 304, headers });
+    }
+    return new Response(bytes, { status: 200, headers });
+  }
+
+  async #handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method.toUpperCase() === 'HEAD' ? 'GET' : request.method.toUpperCase();
@@ -672,7 +709,14 @@ export class WebServer {
         }
         if (typeof body !== 'object' || body === null || Array.isArray(body)) return this.json(400, { error: 'Invalid request' });
         if (!handler) return this.json(404, { error: 'Not found' });
-        return await handler(this.ctx, url, body as Record<string, unknown>, request, principal);
+        // a write (a doc made, a file saved or excluded, a worktree merged...) makes the kept poll answers stale (core/memo.ts);
+        // the page's own heartbeats are no writes
+        if (!QUIET_POSTS.test(path)) clearMemos();
+        try {
+          return await handler(this.ctx, url, body as Record<string, unknown>, request, principal);
+        } finally {
+          if (!QUIET_POSTS.test(path)) clearMemos();
+        }
       }
       await drain(request); // the gate refuses every other method (no route has one)
       return this.json(404, { error: 'Not found' });

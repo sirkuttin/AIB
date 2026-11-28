@@ -28,6 +28,7 @@
  * The /api/live/wsl/* routes ride along in this table (wsl_routes.ts).
  */
 import { isStr } from "../core/py.ts";
+import { Memo } from "../core/memo.ts";
 import { parseQs } from "../artifacts/origin.ts";
 import { projectKey } from "../desktop/project_delete.ts";
 import { changesFolder } from "../worktrees/chat_folders.ts";
@@ -76,6 +77,7 @@ type Handler = (
   principal?: Principal,
 ) => Promise<Reply>;
 
+const filesListMemo = new Memo<Record<string, unknown>>(2000);
 const one = (
   args: Record<string, string[]>,
   name: string,
@@ -379,14 +381,20 @@ export function filesRoutes(): Map<string, Handler> {
     }
     return args;
   };
+  // One folder's listing stats every entry and runs git three times; the page lists the same folder from several chats, windows and
+  // polls. One run answers them all for a moment (core/memo.ts; any write through AIB drops it).
   route("/api/live/files/list", async (_ctx, root, args, main) => {
-    const base = files.realRoot(root);
-    const lo = await local.localOnlyOf(main);
-    const same = samePath(base, files.realRoot(main));
-    const listing = await files.listLocal(base, main, lo, one(args, "dir"));
-    await files.excludeHints(main, lo, listing, same);
-    const { sig, ...rest } = listing;
-    return { root: base, ...rest, localOnly: localPart(main, lo, sig) };
+    const dir = one(args, "dir");
+    const answer = await filesListMemo.get(`${root}|${main}|${dir}`, async () => {
+      const base = files.realRoot(root);
+      const lo = await local.localOnlyOf(main);
+      const same = samePath(base, files.realRoot(main));
+      const listing = await files.listLocal(base, main, lo, dir);
+      await files.excludeHints(main, lo, listing, same);
+      const { sig, ...rest } = listing;
+      return { root: base, ...rest, localOnly: localPart(main, lo, sig) };
+    });
+    return structuredClone(answer); // the route's checks below may change what they are given
   });
   route("/api/live/files/search", async (ctx, root, args, main) => {
     const base = files.realRoot(root);

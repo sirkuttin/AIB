@@ -3,6 +3,7 @@
  * sign-in routes, post_shutdown). The web server forwards them through the HostProxy, exactly as RemoteStudio does.
  */
 import { ValueError } from '../core/py.ts';
+import { Memo } from '../core/memo.ts';
 import { pyInt } from '../transcripts/pycompat.ts';
 import { modelInUse } from '../transcripts/store.ts';
 import { refuseNetworkPath } from './security.ts';
@@ -27,7 +28,12 @@ export type LiveHandler = (ctx: WebContext, url: URL, body: Json | null) => Prom
 const arg = (url: URL, name: string, fallback = '') => url.searchParams.get(name) ?? fallback;
 
 /** web_handler.model_in_use: the model the replies really come from (transcript first, then the adapter's usage reports). */
-async function inUse(ctx: WebContext, state: Json): Promise<Json | null> {
+const inUseMemo = new Memo<Json | null>(3000, 400);
+/** The model in use changes with a reply, not with a poll: one transcript read per chat per 3 s, however many windows poll its state. */
+function inUse(ctx: WebContext, state: Json): Promise<Json | null> {
+  return inUseMemo.get(`${state.provider}|${state.sessionId}`, () => inUseNow(ctx, state));
+}
+async function inUseNow(ctx: WebContext, state: Json): Promise<Json | null> {
   let found: Json | null = null;
   try {
     found = await modelInUse(String(state.provider ?? ''), state.sessionId as string, ctx.options.claudeProjects, ctx.options.ompSessions);

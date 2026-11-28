@@ -90,7 +90,13 @@ function denoServe(options: ServeOptions, handler: ServeHandler): Server {
   };
 }
 
-const NO_BODY_STATUS = new Set([101, 204, 205, 304]);
+const NO_BODY_STATUS = new Set([101, 204, 205, 304, 499]);
+
+/** node's "the other side closed the connection" (ECONNRESET, message 'aborted'): a hang-up, whatever the handler was doing. */
+export function isHangUp(error: unknown): boolean {
+  const e = error as { code?: unknown; message?: unknown } | null;
+  return !!e && (e.code === 'ECONNRESET' || e.code === 'ERR_STREAM_PREMATURE_CLOSE' || e.message === 'aborted');
+}
 
 /** Ports this process's node listeners hold or are about to bind (node binds a moment later; a second claim must throw now). */
 const claimed = new Set<string>();
@@ -143,7 +149,9 @@ function nodeServe(options: ServeOptions, handler: ServeHandler): Server {
       try {
         response = await handler(request, info);
       } catch (error) {
-        response = await onError(error);
+        // The client hung up (a page gave up on a slow request, a window closed): not a fault of the handler. 'aborted' is what node
+        // throws into a body that was being read (2026-11-27: three "request handler failed ... Error: aborted" in 10 minutes).
+        response = abort.signal.aborted || isHangUp(error) ? new Response(null, { status: 499 }) : await onError(error);
       }
     } catch (error) {
       log.exception(error, 'request could not be read');

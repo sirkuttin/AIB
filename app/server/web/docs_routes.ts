@@ -67,6 +67,7 @@
  *                                                   200 {ok, result}: a refusal is ok=false with Claude Docs' code.
  */
 import * as Y from 'yjs';
+import { clearMemos, Memo } from '../core/memo.ts';
 import { authorize, type Principal, Refusal, REMOTE_PC, TOKEN_HEADER } from './security.ts';
 import { ROUTES } from './routes.ts';
 import { upgradeWebSocket, wantsWebSocket, type WsLink } from '../platform/websocket.ts';
@@ -97,6 +98,7 @@ type Route = (ctx: WebContext, url: URL, body: Json | null) => Promise<Reply>;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 /** A doc route asked about an artifact in Recently deleted (Edit as doc, its Undo, became, built): refused until restored. */
 const DELETED: Reply = [409, { error: 'This artifact is in Recently deleted. Restore it first.', code: 'deleted' }];
+const docsListMemo = new Memo<Reply>(2000);
 const NOT_OPEN: Reply = [404, { error: 'Open the doc first', code: 'doc_not_open' }];
 
 /** 'project:<folder>' (files_routes.rootFor): the id a doc tab whose chat is gone, or a doc pop-out, asks with. */
@@ -155,7 +157,8 @@ export function docsRoutes(): Map<string, Route> {
     const root = await rootFor(ctx, { id: [url.searchParams.get('id') ?? ''], root: [url.searchParams.get('root') || 'main'] });
     if (typeof root !== 'string') return root;
     try {
-      return [200, { ok: true, docs: await ctx.docs.list(root), others: await ctx.docs.others(root) }];
+      // many chats and windows ask for the same project's docs: one walk of aib-docs/ answers them all (core/memo.ts; a write clears it)
+      return await docsListMemo.get(root, async () => [200, { ok: true, docs: await ctx.docs.list(root), others: await ctx.docs.others(root) }] as Reply);
     } catch (error) {
       return refused(error); // a WSL project whose distro is away: wsl_unavailable with the line to show
     }
@@ -358,6 +361,18 @@ export function docsRoutes(): Map<string, Route> {
   );
   routes.set('POST /api/live/docs/trash', onDoc(async (ctx, doc) => [200, { ok: true, ...(await trashDoc(ctx, doc)) }]));
   routes.set('POST /api/live/docs/reveal', onDoc(async (_ctx, _doc, args) => [200, { ok: true, ...(await revealExport(args.path)) }]));
+  // a write to a doc (a page renamed, a doc trashed or duplicated...) changes what the docs list shows: its kept answer goes
+  for (const [key, route] of [...routes]) {
+    if (!key.startsWith('POST ')) continue;
+    routes.set(key, async (ctx, url, body) => {
+      clearMemos();
+      try {
+        return await route(ctx, url, body);
+      } finally {
+        clearMemos();
+      }
+    });
+  }
   return routes;
 }
 

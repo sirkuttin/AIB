@@ -47,6 +47,7 @@
  * Plus the Files view of a WSL project (wslFiles, called by files_routes.ts): list, search and read through the distro's helper.
  */
 import { pageAllowed, type Principal } from './security.ts';
+import { Memo } from '../core/memo.ts';
 import { issueBytes } from './file_tickets.ts';
 import type { WebContext } from './server.ts';
 import { parseQs } from '../artifacts/origin.ts';
@@ -183,7 +184,12 @@ async function signinStates(host: WslHost, ids: string[], name: string): Promise
 }
 
 /** GET /api/live/wsl/status: also the page's poll for URLs waiting to be opened. */
-export async function wslStatus(ctx: { stateDir?: string | null }): Promise<Record<string, unknown>> {
+export function wslStatus(ctx: { stateDir?: string | null }): Promise<Record<string, unknown>> {
+  // every window polls this; the answer is kept for 2 s (the env.get call into each ready distro was ~1 s of waiting per poll)
+  return wslStatusMemo.get('status', () => wslStatusNow(ctx));
+}
+const wslStatusMemo = new Memo<Record<string, unknown>>(2000, 4);
+async function wslStatusNow(ctx: { stateDir?: string | null }): Promise<Record<string, unknown>> {
   urlGate.configure(ctx.stateDir ? String(ctx.stateDir) : null);
   const overview = await wslOverview(); // the registry only: never wsl.exe
   const distros = [];

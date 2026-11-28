@@ -65,6 +65,7 @@ import {
   versionAib,
 } from './aibdoc.ts';
 import * as Y from 'yjs';
+import { clearMemos } from '../core/memo.ts';
 import { fsOf, isRemotePath, pathKey, sepOf } from './doc_fs.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -522,6 +523,20 @@ export class DocStore {
    * exist is refused (`no_doc`). A doc of the old layout is moved to its folder.
    */
   async open(
+    projectRoot: string,
+    nameValue: unknown,
+    create?: string,
+    by?: string,
+    quiet = false,
+  ): Promise<OpenDoc> {
+    try {
+      return await this.#open(projectRoot, nameValue, create, by, quiet);
+    } finally {
+      if (create !== undefined) clearMemos(); // a new doc: the kept docs lists (core/memo.ts) are stale
+    }
+  }
+
+  async #open(
     projectRoot: string,
     nameValue: unknown,
     create?: string,
@@ -1635,6 +1650,7 @@ export class DocStore {
    * changed it since it was made. Open pages are told it is gone.
    */
   async discard(doc: OpenDoc): Promise<void> {
+    clearMemos();
     if (doc.timer !== null) clearTimeout(doc.timer);
     if (doc.snapTimer !== null) clearTimeout(doc.snapTimer);
     await doc.busy.catch(() => {});
@@ -1654,6 +1670,7 @@ export class DocStore {
    * file's text after the store is done with it.
    */
   async landSynced(projectRoot: string, nameValue: unknown, text: string, from: string): Promise<string> {
+    clearMemos();
     const { name } = docRef(nameValue);
     for (const p of parseAib(text).pages) pageNodes(p);
     const id = await docId(projectRoot, name);
@@ -1720,6 +1737,7 @@ export class DocStore {
 
   /** Sync: the doc was deleted by the other PC. An open doc is closed (its pages are told), its cache goes, and so do its Markdown copies. */
   async dropSynced(projectRoot: string, nameValue: unknown): Promise<void> {
+    clearMemos();
     const { name } = docRef(nameValue);
     const id = await docId(projectRoot, name);
     const doc = this.docs.get(id);
