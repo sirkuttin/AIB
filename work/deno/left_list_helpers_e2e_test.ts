@@ -171,7 +171,9 @@ Deno.test({
       assert(!needing.includes(main.key), "the main chat is not made to need you by its helper's request");
       assertEquals(inbox.count, new Set(needing).size, 'the count is the number of distinct chats that need you');
 
-      // archiving the main chat archives its listed helpers
+      // C was archived by the user on its own before; archiving the main chat archives its other listed helpers
+      const [cs] = await lab.web.post('conversation-state', { action: 'archive', provider: c.key.split(':')[0], sessionId: c.key.split(':')[1] });
+      assertEquals(cs, 200);
       await page.eval(`document.querySelector(${JSON.stringify(ROW(main.key))}).parentElement.querySelector('[data-menu-key]').click()`);
       await page.click('#organizeMenu button[data-item=archive]');
       const keep = await page.waitFor(`!!document.querySelector('dialog[open] button, .organize-dialog button')`, 5000, 'the live-chat dialog').catch(() => null);
@@ -184,6 +186,13 @@ Deno.test({
       };
       for (let i = 0; i < 100 && !(await archived()).every(Boolean); i++) await sleep(100);
       assertEquals(await archived(), [true, true, true, true], 'the main chat and its three listed helpers are archived');
+
+
+      // un-archiving the main chat brings back the helpers archived with it, and only those: C stays archived
+      const [us] = await lab.web.post('conversation-state', { action: 'unarchive', provider: main.key.split(':')[0], sessionId: main.key.split(':')[1] });
+      assertEquals(us, 200);
+      assertEquals(await archived(), [false, false, false, true], 'main, A and B are back; C, archived on its own, stays archived');
+      await page.waitFor(`(${ORDER}).includes(${JSON.stringify(b.key)})`, 20000, 'B is back in the left list');
 
       assert(page.errors.length === 0, `console errors: ${page.errors.join(' | ')}`);
       const owner = await ownerProblems(page);

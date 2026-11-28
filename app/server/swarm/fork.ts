@@ -66,13 +66,13 @@ export function chatDigest(events: unknown[]): string {
   return clipEnd(lines.join('\n'), DIGEST_CLIP);
 }
 
-/** The first message of a fork that could not copy the session. It starts "Summary of <chat>". */
+/** The context a fork that could not copy the session gets in front of the user's first message (no turn of its own). It starts "Summary of <chat>". */
 export function summaryOpening(chat: string, digest: string): string {
   return [
     `Summary of “${chat}”`,
     '',
     `This chat is a fork of “${chat}”. You did not take part in it; below is what happened there, so you can go on from it.`,
-    'The user will write to you next. Reply now with one short line saying you have read it, and wait.',
+    'The user’s first message to you comes next: answer that message, and do not mention this summary unless it helps.',
     '',
     digest,
   ].join('\n');
@@ -80,3 +80,6 @@ export function summaryOpening(chat: string, digest: string): string {
 
 /** The line a fork that copied the session starts with (posted in the fork's chat). */
 export const copyLine = (chat: string) => `Copy of “${chat}”: this chat is an exact copy of that session, up to now. It waits for your first message.`;
+
+/** The line a summary fork shows in its own chat (a note, not a message). */
+export const summaryLine = (chat: string) => `Summary of “${chat}”: given to the agent with your first message. It waits for you.`;

@@ -288,6 +288,10 @@ class Box {
   readonly aib: Aib;
   readonly swarm: Swarm;
   readonly calls: [string, Json][] = [];
+  logBefore = 0;
+  /** Every line the fake agents received (FAKE_ACP_LOG, shared by the main chat and its forks). */
+  readonly agentLog = pathOf(this.dir, 'agent-log.txt');
+  readonly logText = () => { try { return Deno.readTextFileSync(this.agentLog); } catch { return ''; } };
 
   constructor(flags: string[]) {
     setSwarmEnabled(this.state, true);
@@ -296,7 +300,7 @@ class Box {
     const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
     aib.ownerProbe = () => null;
     aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    aib.connectionFactory = (_command, cwd, provider, options) => new Connection([NODE, FAKE_UNIQUE, ...flags], cwd, provider, options ?? {});
+    aib.connectionFactory = (_command, cwd, provider, options) => new Connection([NODE, FAKE_UNIQUE, ...flags], cwd, provider, { ...(options ?? {}), env: { ...(options?.env ?? {}), FAKE_ACP_LOG: this.agentLog } });
     const live = aib.liveCall.bind(aib);
     aib.liveCall = (name: string, body: unknown) => {
       this.calls.push([name, body as Json]);
@@ -336,6 +340,7 @@ async function forkedChat(box: Box) {
   await main.prompt('Write the login page', 'ui-1');
   await answerApprovals(main);
   await until(() => !main.busy, 'the main turn ended', 15);
+  box.logBefore = box.logText().length;
   const [status, made] = await box.swarm.fork({ id: main.id, title: 'Login chat' });
   assertEquals(status, 200, JSON.stringify(made));
   const id = String((made as Json).helper);
@@ -387,10 +392,22 @@ Deno.test({
     assertEquals(h.fork!.how, 'summary');
     assertEquals(h.title, 'Login chat (fork)');
     assertEquals(hiddenFromLists(h), false);
-    await until(() => userTexts(chat).length > 0, 'the summary sent', 15);
-    const first = userTexts(chat)[0];
-    assert(first.startsWith('Summary of “Login chat”'), first.slice(0, 80));
-    assert(first.includes('Write the login page'), 'it carries what the chat said: ' + first);
+    // it waits: the agent got no prompt, no user message exists, the chat shows the summary line as a note
+    await pause(500);
+    const sinceFork = () => box.logText().slice(box.logBefore);
+    assert(!sinceFork().includes('"session/prompt"'), 'the fork agent received no prompt before the user wrote: ' + sinceFork().slice(0, 300));
+    assertEquals(userTexts(chat), [], 'no user message in the fork yet');
+    assert(!chat.busy, 'no turn is running');
+    assert(notes(chat).some((n) => String(n.message).startsWith('Summary of “Login chat”')), JSON.stringify(notes(chat)));
+    // the user's first message: the summary rides in front of it, as the first and only prompt
+    await chat.prompt('what did we decide?', 'ui-2');
+    await answerApprovals(chat);
+    await until(() => !chat.busy, 'the fork turn ended', 15);
+    const prompts = sinceFork().split(/\r?\n/).filter((l) => l.includes('"session/prompt"'));
+    assertEquals(prompts.length, 1, 'one prompt');
+    assert(prompts[0].includes('Summary of') && prompts[0].includes('Write the login page'), 'the first prompt carries the summary: ' + prompts[0].slice(0, 400));
+    assert(prompts[0].includes('what did we decide?'), 'and the user message');
+    assertEquals(userTexts(chat), ['what did we decide?'], 'the chat shows only what the user wrote');
   },
 });
 
@@ -401,11 +418,9 @@ Deno.test({
     await using box = new Box(['--models', '--fork', '--fork-refuse']);
     const { main, h, chat } = await forkedChat(box);
     assertEquals(h.fork!.how, 'summary');
-    await until(() => userTexts(chat).length > 0, 'the summary sent', 15);
-    assert(userTexts(chat)[0].startsWith('Summary of “Login chat”'));
+    assertEquals(userTexts(chat), [], 'the refused copy waits for the user too');
+    assert(notes(chat).some((n) => String(n.message).startsWith('Summary of “Login chat”')));
     // forking the fork: no helper of a helper; the new fork hangs under the same main chat
-    await answerApprovals(chat);
-    await until(() => !chat.busy, 'the summary turn ended', 15);
     const [status, second] = await box.swarm.fork({ id: chat.id, title: 'Login chat (fork)' });
     assertEquals(status, 200, JSON.stringify(second));
     const again = box.swarm.registry.get(String((second as Json).helper))!;

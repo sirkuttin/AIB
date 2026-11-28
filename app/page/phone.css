@@ -1444,6 +1444,9 @@ html.ph-viewing body {
 .ph-cw > .ph-card {
   padding-right: 52px;
 }
+.ph-cw.ph-sub {
+  margin-left: 24px; /* a listed helper sits under its main chat */
+}
 .ph-more-btn {
   position: absolute;
   top: 8px;

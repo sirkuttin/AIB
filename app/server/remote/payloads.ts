@@ -89,6 +89,9 @@ export interface HomeChat {
   line: string;
   /** What it waits on first (the phone's inbox card answers it from home): an approval or a question, or null. Additive. */
   ask: HomeAsk | null;
+  /** A listed helper (left-list helpers, owner 2026-11-27): the key of its main chat, and when it was listed (seconds). Additive. */
+  under?: string;
+  listedAt?: number;
 }
 
 /** The first request a chat waits on, as the phone's inbox card needs it (only the options a phone may pick: allow/deny once). */
@@ -480,11 +483,18 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
   const project = projectsFor(ctx, raws.map((c) => str(c.projectRoot, 2000) || str(c.cwd, 2000)));
   const chats: (HomeChat & { at: number })[] = [];
   // a helper's chat is not in the phone's list (it is in the inbox when it needs you, and opens by its link): registry.ts hiddenFromLists
-  const helperChats = hiddenChats(ctx.stateDir ? readHelpers(ctx.stateDir) : {});
+  const helpers = ctx.stateDir ? readHelpers(ctx.stateDir) : {};
+  const helperChats = hiddenChats(helpers);
+  // ...unless the user listed it: then it is a card under its main chat (registry.ts hiddenFromLists)
+  const listed = new Map<string, { under: string; listedAt: number }>();
+  for (const h of Object.values(helpers)) {
+    if (h.listed && h.kind !== 'subagent' && h.chat?.lasting && h.parent?.lasting) listed.set(h.chat.lasting, { under: h.parent.lasting, listedAt: Number(h.listedAt) || 0 });
+  }
   for (const c of raws) {
     const id = str(c.id, 100);
     const key = `${str(c.provider, 60)}:${str(c.sessionId, 200)}`;
-    if (helperChats.live.has(id) || helperChats.lasting.has(key) || obj(c.swarm).role === 'helper') continue;
+    const sub = listed.get(key);
+    if (helperChats.live.has(id) || helperChats.lasting.has(key) || (obj(c.swarm).role === 'helper' && !sub)) continue;
     const mark = obj(marks[key]);
     if (mark.archivedAt || mark.deletedAt) continue;
     const attention = obj(c.attention);
@@ -519,6 +529,7 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
       changedAt: at ? new Date(at).toISOString() : '',
       line: titles.line(ctx, id, `${Number(c.cursor) || 0}|${needs}|${asks}|${c.busy ? 1 : 0}`, Number(c.cursor) || 0),
       ask: null,
+      ...(sub ? { under: sub.under, listedAt: sub.listedAt } : {}),
       at,
     });
   }

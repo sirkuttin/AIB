@@ -22,7 +22,7 @@ import * as agentRegistry from '../agents/agent_registry.ts';
 import { type Helper, helperOf, HOLDING_STATES, type Landing, newHelperId, readHelpers, Registry, RUNNING_STATES } from './registry.ts';
 import { lockChats, newLockId } from '../worktrees/landing_lock.ts';
 import { CopyMergeQueue } from '../worktrees/merge_queue.ts';
-import { chatDigest, copyLine, summaryOpening } from './fork.ts';
+import { chatDigest, copyLine, summaryLine, summaryOpening } from './fork.ts';
 import { BriefError, briefPrompt, overlaps, owned, readBrief, wrapReport } from './brief.ts';
 import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE, workspaceModeOf, workspaceModesOf } from './rules.ts';
 import { baseAgent, isServerEntry, serverIdOf } from '../agents/claude_family.ts';
@@ -703,19 +703,21 @@ export class Swarm {
       };
       const patched = await this.registry.patch(id, { chat: { ...h.chat, mode: usedMode, lasting: lasting(state) }, worktree, cursor: Number(state.cursor) || 0 });
       if (patched) await this.#ensureName(patched);
-      if (h.fork) { // a fork waits for the user's first message: a copy of the session says so in its own chat; a summary is sent first
+      if (h.fork) { // a fork waits for the user's first message: a copy of the session says so in its own chat; a summary is put in front of the first message
         const how = s(state.forkHow) === 'copy' ? 'copy' : 'summary';
         await this.registry.patch(id, { fork: { ...h.fork, how }, state: 'working' });
         if (how === 'copy') {
           await this.ctx.host.liveCall('swarm-note', { id: h.chat.live, kind: 'swarm-start', helper: id, message: copyLine(h.fork.of) }).catch(() => {});
           return;
         }
-        const [code, payload] = await this.ctx.host.liveCall('prompt', {
+        // no turn: the summary goes in front of the user's first message (prompt context) and the chat shows a note
+        const [code, payload] = await this.ctx.host.liveCall('prompt-context', {
           id: h.chat.live,
-          text: summaryOpening(h.fork.of, h.fork.digest ?? ''),
-          clientMessageId: `swarm-brief-${id}`,
+          line: summaryOpening(h.fork.of, h.fork.digest ?? ''),
+          max: 9000,
         });
-        if (code !== 200) return await this.#fail(id, `The summary could not be sent: ${s(obj(payload).error)}`);
+        if (code !== 200) return await this.#fail(id, `The summary could not be given: ${s(obj(payload).error)}`);
+        await this.ctx.host.liveCall('swarm-note', { id: h.chat.live, kind: 'swarm-start', helper: id, message: summaryLine(h.fork.of) }).catch(() => {});
         return;
       }
       const [code, payload] = await this.ctx.host.liveCall('prompt', {

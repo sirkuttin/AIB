@@ -239,14 +239,34 @@ export function aibRoutes(): Map<string, AibHandler> {
     const folders = restoreFolders(ctx.conversations, body);
     const reply = await conversationAction(aibOf(ctx), body);
     if (reply[0] === 200) await bringBack(ctx.removedProjects, folders, ctx.addedProjects); // restoring a chat brings its removed project back
-    // Archiving a main chat archives the helpers listed under it (left-list helpers, owner 2026-11-27)
-    if (reply[0] === 200 && body?.action === 'archive' && typeof body.provider === 'string' && typeof body.sessionId === 'string') {
-      const parent = `${body.provider}:${body.sessionId}`;
-      for (const h of swarmOf(ctx).registry.all()) {
-        const at = h.chat?.lasting?.indexOf(':') ?? -1;
-        if (!h.listed || h.parent.lasting !== parent || at < 1) continue;
-        await conversationAction(aibOf(ctx), { action: 'archive', provider: h.chat.lasting.slice(0, at), sessionId: h.chat.lasting.slice(at + 1) })
-          .catch((error) => console.error('Archiving the listed helper %s failed: %s', h.id, error instanceof Error ? error.message : error));
+    // Archiving a main chat archives the helpers listed under it; un-archiving brings back only those (left-list helpers, owner 2026-11-27)
+    const action = body?.action;
+    if (reply[0] === 200 && typeof body?.provider === 'string' && typeof body?.sessionId === 'string' && ['archive', 'unarchive', 'delete'].includes(String(action))) {
+      const key = `${body.provider}:${body.sessionId}`;
+      const registry = swarmOf(ctx).registry;
+      const marks = () => ctx.conversations.public().entries;
+      for (const h of registry.all()) {
+        const lasting = h.chat?.lasting ?? '';
+        const at = lasting.indexOf(':');
+        if (!h.listed || at < 1) continue;
+        if (lasting === key) { // the user acted on the helper itself: it is theirs now
+          if (h.archivedWithMain) await registry.patch(h.id, { archivedWithMain: false });
+          continue;
+        }
+        if (h.parent.lasting !== key) continue;
+        const target = { provider: lasting.slice(0, at), sessionId: lasting.slice(at + 1) };
+        try {
+          if (action === 'archive') {
+            if (obj(marks()[lasting]).archivedAt) continue; // archived on its own before: it stays its own
+            await conversationAction(aibOf(ctx), { action: 'archive', ...target });
+            await registry.patch(h.id, { archivedWithMain: true });
+          } else if (action === 'unarchive' && h.archivedWithMain) {
+            await conversationAction(aibOf(ctx), { action: 'unarchive', ...target });
+            await registry.patch(h.id, { archivedWithMain: false });
+          }
+        } catch (error) {
+          console.error('Changing the listed helper %s failed: %s', h.id, error instanceof Error ? error.message : error);
+        }
       }
     }
     return reply;

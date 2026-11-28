@@ -94,6 +94,8 @@ export interface Helper {
   byUser?: boolean;
   /** When it was listed (seconds): listed helpers show in start order and never re-sort by activity. */
   listedAt?: number;
+  /** Archived together with its main chat (not by the user on its own): un-archiving the main chat brings it back. */
+  archivedWithMain?: boolean;
   /** A fork of a chat: `of` the chat's name; `how` "copy" (the agent forked its own session) or "summary" (a written summary of the chat). */
   fork?: { of: string; how: 'copy' | 'summary' | ''; /** the written summary, sent as the first message when the session could not be copied */ digest?: string };
   merge: null | {

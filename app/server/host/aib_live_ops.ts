@@ -263,7 +263,8 @@ op('files-changed', false, function (body) { // files/live_files.ts: write calls
 op('prompt-context', false, function (body) { // a one-time line in front of this chat's next prompt (a landing told it what changed)
   const connection = this.$connection(body);
   const replace = typeof body.replace === 'string' ? body.replace.slice(0, 600) : '';
-  this.addPromptContext(connection, [...String(need(body, 'line'))].slice(0, 2000).join(''), replace);
+  const max = Math.min(Math.max(Number(body.max) || 2000, 1), 9000); // a fork's summary is longer than a note
+  this.addPromptContext(connection, [...String(need(body, 'line'))].slice(0, max).join(''), replace);
   return OK;
 });
 op('folder-chats', false, function (body) { // the open chats that work in this folder itself (not copies, not helpers)

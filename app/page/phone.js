@@ -856,7 +856,19 @@
       items.push({ kind: 'saved', key: c.key, title: c.title, agent: c.agent, project: obj(c.project), at: Date.parse(c.lastActive || '') || 0, chat: c });
     }
     items.sort((a, b) => b.at - a.at || (a.kind === b.kind ? 0 : a.kind === 'live' ? -1 : 1));
-    return filter ? items.filter((i) => i.project.id === filter) : items;
+    const shown = filter ? items.filter((i) => i.project.id === filter) : items;
+    // listed helpers: right under their main chat, in the order they were listed (a card whose main chat is not shown stays on its own)
+    const keys = new Set(shown.filter((i) => i.kind === 'live' && !i.chat.under).map((i) => str(i.chat.key)));
+    const subs = shown.filter((i) => i.kind === 'live' && i.chat.under && keys.has(str(i.chat.under)));
+    if (!subs.length) return shown;
+    subs.sort((a, b) => (Number(a.chat.listedAt) || 0) - (Number(b.chat.listedAt) || 0));
+    const out = [];
+    for (const i of shown) {
+      if (subs.includes(i)) continue;
+      out.push(i);
+      for (const s of subs) if (str(s.chat.under) === str(i.chat.key)) out.push({ ...s, sub: true });
+    }
+    return out;
   }
 
   /* The projects the filter lists (from the cards, in the order they first appear in the list): [{id, name, color, count}]. */
@@ -3444,7 +3456,7 @@
       card.dataset.menuKey = key;
       cardItems.set(key, item);
     }
-    const wrap = el('div', 'ph-cw' + (copy ? ' ph-copy-ok' : ''));
+    const wrap = el('div', 'ph-cw' + (copy ? ' ph-copy-ok' : '') + (item.kind === 'live' && c.under && item.sub ? ' ph-sub' : ''));
     wrap.setAttribute('data-rk', key);
     const more = button('ph-more-btn', '⋯', () => openCardMenu(item));
     more.disabled = opening;
