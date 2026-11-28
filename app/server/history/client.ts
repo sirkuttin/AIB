@@ -52,6 +52,7 @@ export class HistoryClient {
     };
     this.#worker.onmessageerror = (e) => logWorkerError('history/store_worker.ts', e);
     this.#ready = this.#call({ op: 'init', dir, options });
+    this.#ready.catch(() => {}); // init can fail before the first op awaits it: handled here, every op still gets the rejection
   }
 
   #call(message: Record<string, unknown>): Promise<unknown> {

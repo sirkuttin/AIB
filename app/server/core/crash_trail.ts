@@ -225,6 +225,7 @@ export async function installCrashTrail(options: CrashTrailOptions): Promise<Cra
     } catch { /* logging is gone */ }
     trail.ended(1, 'uncaught exception');
   });
+  keepRunningOnRejections();
   globalThis.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
     e.preventDefault(); // logged, and AIB keeps running: one orphan promise must not end every window and chat
     const text = `unhandled promise rejection (AIB keeps running): ${stackOf(e.reason)}`;
@@ -245,6 +246,22 @@ export async function installCrashTrail(options: CrashTrailOptions): Promise<Cra
   } catch { /* not writable here */ }
   trail.start();
   return trail;
+}
+
+/**
+ * Why a plain preventDefault() in our listener was not enough (2026-11-27: three exits in 35 minutes from one orphan rejection):
+ * `deno desktop` registers its own `unhandledrejection` listener (ext:deno_desktop/error_reporting) at bootstrap, before any code
+ * of ours, so it runs first. It skips events whose `defaultPrevented` is already true; otherwise it logs "Uncaught (desktop):", calls
+ * preventDefault itself, opens an "Application Error" dialog and calls Deno.exit(1) once that is dismissed or cannot be shown
+ * (headless, hidden window). A capture listener does not run earlier (Deno runs target listeners in registration order).
+ * So the event is told it is already prevented: `defaultPrevented` reads true on every PromiseRejectionEvent, which makes that
+ * listener return; Deno's own check after dispatch reads the same getter, so the runtime keeps running too. Our listener below
+ * still runs and logs. Uncaught exceptions ("error" events) are not touched: they end the process as designed.
+ */
+export function keepRunningOnRejections(): void {
+  try {
+    Object.defineProperty(PromiseRejectionEvent.prototype, 'defaultPrevented', { configurable: true, get: () => true });
+  } catch { /* not patchable here: the preventDefault in the listener is all there is */ }
 }
 
 /** The crash trail of this process, or null (tests, the agent host, before main installed it). */

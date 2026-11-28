@@ -5,6 +5,15 @@
 import { installCrashTrail } from '../../app/server/core/crash_trail.ts';
 
 const [dir, how] = Deno.args;
+if (how === 'desktop-reject') {
+  // Like ext:deno_desktop/error_reporting, registered by the runtime before any of our code: skips prevented events, else
+  // takes over and exits (the desktop app exits after its error dialog).
+  globalThis.addEventListener('unhandledrejection', (ev) => {
+    if (ev.defaultPrevented) return;
+    ev.preventDefault();
+    setTimeout(() => Deno.exit(1), 10);
+  });
+}
 const trail = await installCrashTrail({ stateDir: dir, version: 'test', captureStderr: true, heartbeatMs: 50 });
 trail.beat();
 if (how === 'throw') {
@@ -17,6 +26,15 @@ if (how === 'throw') {
     trail.line('still running after the rejection');
     Deno.exit(0);
   }, 100);
+} else if (how === 'desktop-reject') {
+  // The WslHost.call shape: a promise a timer rejects while something else is awaited first.
+  const answer = new Promise<void>((_, reject) => setTimeout(() => reject(new Error('timer orphan')), 20));
+  await new Promise((r) => setTimeout(r, 60));
+  setTimeout(() => {
+    trail.line('still running after the timer rejection');
+    Deno.exit(0);
+  }, 100);
+  void answer;
 } else if (how === 'exit') {
   setTimeout(() => Deno.exit(3), 20);
 } else if (how === 'oom') {

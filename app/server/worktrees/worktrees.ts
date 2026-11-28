@@ -174,6 +174,28 @@ async function runProcess(
   return { code: done.code, out: done.stdout, err: done.stderr };
 }
 
+/** The folders AIB keeps its worktrees in (<state dir>/worktrees, one per Registry): git there is told they are safe. */
+const aibWorktreeRoots = new Set<string>();
+
+/**
+ * `-c safe.directory=<worktree>` for a folder AIB created: <worktrees root>/<project hash>/<name>, or anything inside it. Windows
+ * gives folders created by an elevated process the owner BUILTIN/Administrators, and git then refuses them ("detected dubious
+ * ownership"; 510 failed swarm polls on 2026-11-27). Only folders under AIB's own worktrees folder get it; nothing else, and the
+ * ownership on disk is not changed. Returns [] for any other folder.
+ */
+export function safeDirectoryArgs(cwd: string): string[] {
+  const path = normpath(String(cwd));
+  const low = normcase(path);
+  for (const root of aibWorktreeRoots) {
+    const prefix = root.endsWith(SEP) ? root : root + SEP;
+    if (!low.startsWith(prefix)) continue;
+    const parts = path.slice(prefix.length).split(SEP).filter(Boolean);
+    if (parts.length < 2 || parts.includes('..')) continue;
+    return ['-c', `safe.directory=${path.slice(0, prefix.length) + parts.slice(0, 2).join(SEP)}`.replaceAll('\\', '/')];
+  }
+  return [];
+}
+
 /** worktrees.git without the test seam. */
 export async function realGit(args: string[], cwd: string, options: GitOptions = {}): Promise<GitResult> {
   const {
@@ -186,7 +208,7 @@ export async function realGit(args: string[], cwd: string, options: GitOptions =
   } = options;
   const own = identity ? configuredCommitIdentity() : null;
   const who = own ? ['-c', `user.name=${own.name}`, '-c', `user.email=${own.email}`, '-c', 'commit.gpgsign=false'] : SNAPSHOT_IDENTITY;
-  const command = ['-c', 'core.longpaths=true', ...(identity ? who : []), ...args];
+  const command = ['-c', 'core.longpaths=true', ...safeDirectoryArgs(cwd), ...(identity ? who : []), ...args];
   let done: { code: number; out: Uint8Array; err: Uint8Array };
   try {
     const [program, ...lead] = testing.gitCommand ?? ['git'];
@@ -212,7 +234,7 @@ export function git(args: string[], cwd: string, options: GitOptions = {}): Prom
 /** A plain `git` subprocess with the inherited environment and no -c options. */
 export async function rawGit(args: string[], cwd: string, env: Record<string, string> = {}, input?: Uint8Array): Promise<GitResult> {
   const merged = Object.keys(env).length ? Object.assign(Deno.env.toObject(), env) : null;
-  const done = await runProcess('git', args, cwd, merged, input ?? null, null);
+  const done = await runProcess('git', [...safeDirectoryArgs(cwd), ...args], cwd, merged, input ?? null, null);
   return { returncode: done.code, stdout: universal(DECODER.decode(done.out)), stderr: universal(DECODER.decode(done.err)), out: done.out };
 }
 
@@ -329,6 +351,7 @@ export class Registry {
   constructor(stateDir: string) {
     this.stateDir = pathStr(String(stateDir));
     this.path = pathOf(this.stateDir, Registry.FILE);
+    aibWorktreeRoots.add(normcase(normpath(this.root)));
   }
 
   get root(): string {

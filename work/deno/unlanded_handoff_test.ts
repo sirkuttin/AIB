@@ -30,6 +30,44 @@ type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
 const UNIQUE = FAKE_UNIQUE;
 
+Deno.test({
+  ...T,
+  name: 'a hand-over whose git check keeps failing (dubious ownership) is retried after a growing wait, not at every poll',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const { path } = box.subagent(main.id, 'owned.txt', 'x\n', 'stopped', { description: 'Locked folder' });
+    await polls(box, 2); // seen, and looked at once while git still works
+    const fail = new wt.GitError('git read-tree HEAD failed: fatal: detected dubious ownership in repository');
+    let calls = 0;
+    wt.testing.git = (args, cwd, options) => {
+      if (String(cwd).startsWith(path)) {
+        calls++;
+        throw fail;
+      }
+      return wt.realGit(args, cwd, options);
+    };
+    try {
+      const t0 = Date.now();
+      box.swarm.clock = () => t0 + 200_000;
+      await box.swarm.poll();
+      const first = calls;
+      assert(first > 0, 'the failing check ran');
+      for (const s of [210, 220, 230, 240, 250]) {
+        box.swarm.clock = () => t0 + s * 1000;
+        await box.swarm.poll();
+      }
+      assertEquals(calls, first, 'no retry within the wait after a failure');
+      box.swarm.clock = () => t0 + 1_000_000;
+      await box.swarm.poll();
+      assert(calls > first, 'it is tried again once the wait is over');
+    } finally {
+      wt.testing.git = null;
+    }
+  },
+});
+
 class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-unlanded-' }));
   readonly state = pathOf(this.dir, 'state');

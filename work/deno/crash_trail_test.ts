@@ -54,6 +54,18 @@ Deno.test('crash trail: an unhandled rejection is logged and the process keeps r
   }
 });
 
+Deno.test('crash trail: an orphan rejection from a timer does not reach a runtime listener that exits (the deno desktop handler)', async () => {
+  const dir = Deno.makeTempDirSync({ prefix: 'aib-crash-' });
+  try {
+    assertEquals(await child(dir, 'desktop-reject'), 0);
+    const text = read(dir);
+    assert(text.includes('unhandled promise rejection (AIB keeps running): Error: timer orphan'), text);
+    assert(text.includes('still running after the timer rejection'), text);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
 Deno.test('crash trail: a V8 out-of-memory abort is reported by the next start with the last heartbeat', async () => {
   const dir = Deno.makeTempDirSync({ prefix: 'aib-crash-' });
   try {

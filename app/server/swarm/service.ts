@@ -1813,6 +1813,19 @@ export class Swarm {
   handoffOrphanS = HANDOFF_ORPHAN_S;
   #seenWork = new Set<string>();
   #workCheckedAt = new Map<string, number>();
+  /** Per piece of work whose check keeps failing: how often in a row, and the last message (said once, not every poll). */
+  #workFailed = new Map<string, { n: number; text: string }>();
+
+  /** A failed check: logged the first time (and when the message changes), then retried after 2 min, 4 min... up to 1 h. */
+  #workFailure(id: string, now: number, error: unknown, what: string): void {
+    const text = error instanceof Error ? error.message : String(error);
+    const prev = this.#workFailed.get(id);
+    const n = (prev?.n ?? 0) + 1;
+    this.#workFailed.set(id, { n, text });
+    if (!prev || prev.text !== text) log.exception(error, '%s', what);
+    else if (n === 3 || n === 10) log.warning('%s: still failing (%d tries in a row), checking less often: %s', what, n, text);
+    this.#workCheckedAt.set(id, now + Math.min(60 * 2 ** n, 3600) - 60); // the poll waits 60 s past this stamp
+  }
 
   #workOf(id: string): Work | null {
     const dir = this.ctx.stateDir;
@@ -1942,12 +1955,14 @@ export class Swarm {
       budget--;
       this.#workCheckedAt.set(t.id, now);
       try {
-        if (!(await this.#workStatus(w))?.landed) continue;
+        const status = await this.#workStatus(w);
+        this.#workFailed.delete(t.id);
+        if (!status?.landed) continue;
         log.info('swarm: subagent %s was merged by hand; removing its worktree', t.id);
         await this.registry.update(t.id, (cur) => (cur ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: true, files: 0, kept: [] } } : null));
         await this.#release(w.h);
       } catch (error) {
-        log.exception(error, 'Checking whether subagent %s was merged by hand failed', t.id);
+        this.#workFailure(t.id, now, error, `Checking whether subagent ${t.id} was merged by hand failed`);
       }
     }
     for (const { w, why, orphanOf } of this.#candidates()) {
@@ -1966,6 +1981,7 @@ export class Swarm {
       this.#workCheckedAt.set(w.id, now);
       try {
         const status = await this.#workStatus(w);
+        this.#workFailed.delete(w.id);
         // only leftover (git-ignored) files, nothing changed: not unlanded work, no line; the worktree goes by the KEPT_DAYS cleanup
         if (!status || status.landed || !status.files.length) continue;
         const n = status.files.length;
@@ -1981,7 +1997,7 @@ export class Swarm {
           `Land it, merge it by hand, or discard it. Call ${toolRef(s(to.chat.id), 'unlanded_work')} with work "${w.id}" and action land, diff or discard (discard needs a reason).`;
         if (await this.#wakeParent({ id: w.id }, s(to.chat.id), 'handoff', text)) this.#recordHandoff(w.id, to.chat, why, n);
       } catch (error) {
-        log.exception(error, 'Handing unlanded work %s to the main agent failed', w.id);
+        this.#workFailure(w.id, now, error, `swarm: Handing unlanded work ${w.id} to the main agent failed`);
       }
     }
   }
