@@ -1,5 +1,5 @@
 /**
- * Small shared pieces of the AIB host object: constants, the live-post operation list, request-error helpers.
+ * Small shared pieces of the AIB host object: constants, the request-error helpers.
  * Moved out of aib.ts (no change).
  */
 import * as agentRegistry from '../agents/agent_registry.ts';
@@ -24,37 +24,6 @@ export const ADOPT_WAIT_MS = 20_000;
 export const SWARM_NOTE_KINDS = ['swarm-start', 'swarm-report', 'swarm-merge', 'swarm-undo', 'swarm-stop', 'swarm-fail', 'swarm-ended'];
 export const SWARM_NOTE_ACTIONS = ['swarm-undo', 'swarm-merge-again', 'swarm-open'];
 export const SWARM_ACTION_LABELS: Record<string, string> = { 'swarm-undo': 'Undo', 'swarm-merge-again': 'Merge again', 'swarm-open': 'Open chat' };
-
-/** Aib.LIVE_POST_OPS: the generic POST /api/live/<name> calls (web/live_routes.ts keeps the same list). */
-export const LIVE_POST_OPS: ReadonlySet<string> = new Set([
-  'connect',
-  'discover',
-  'forget',
-  'prompt',
-  'cancel',
-  'permission',
-  'authenticate',
-  'elicitation',
-  'config',
-  'mode',
-  'cancel-pending',
-  'session-op',
-  'disconnect',
-  'queue',
-  'queue-edit',
-  'queue-remove',
-  'queue-move',
-  'queue-resume',
-  'queue-send-now',
-  'steer',
-  'tool-stop',
-  'schedule',
-  'schedule-edit',
-  'schedule-cancel',
-  'schedule-send-now',
-  'dismiss-unknown',
-  'worktree-archive',
-]);
 
 /** KeyError: str() of it is the repr of the key, which is what the page sees as the error text. */
 export class KeyError extends Error {

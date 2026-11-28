@@ -26,6 +26,7 @@ import {
   offHooks,
 } from './aib_helpers.ts';
 import type { Aib } from './aib.ts';
+import type { ConnectHook } from './aib_connect_hooks.ts';
 
 export const claudeSetupMethods = {
   /**
@@ -172,3 +173,24 @@ export const claudeSetupMethods = {
 };
 
 export type ClaudeSetupMethods = typeof claudeSetupMethods;
+
+/** Claude's rules in Aib.connect (aib_connect_hooks.ts). */
+export const claudeConnectHook: ConnectHook = {
+  // Subagent worktrees (subagents/): a Claude chat in a git project gets command hooks through the keeper's forwarder; its key and
+  // id go in the agent's environment (never in settings, a command line or a URL). A WSL chat's run in its distro ($wslClaudeHooks).
+  prepare(this: Aib, x) {
+    return this.$subagentHooks(x.command, x.cwd, x.workspace, x.worktree, x.env, x.distro, x.chatId);
+  },
+  // design 2.6: said up front, before a subagent edits the folder (P0 A7)
+  offNote(_x, c) {
+    if (c.subagentHooks?.off === HOOKS_OFF) {
+      return `Subagents that edit files are off in this chat: hooks are off in your Claude Code settings ` +
+        `(${c.subagentHooks.detail}), so AIB can't give them their own worktree. Read-only subagents (Explore, Plan) still work.`;
+    }
+    // WSL: said up front, never unisolated
+    if (c.subagentHooks?.off === WSL_HOOKS_UNAVAILABLE) {
+      return `Subagents are off in this chat: AIB could not set up their own worktree in this WSL distro (${c.subagentHooks.detail}).`;
+    }
+    return null;
+  },
+};

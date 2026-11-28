@@ -15,15 +15,10 @@ function takingOver(ctx: WebContext): boolean {
   return !!(ctx.host as { takingOver?: () => boolean }).takingOver?.();
 }
 import { afterConnect, discoverAdded } from './project_routes.ts';
+import { LIVE_POST_OPS as HOST_LIVE_POST_OPS } from '../host/aib_live_ops.ts';
 
-/** Aib.LIVE_POST_OPS: the generic POST /api/live/<name> calls. A test keeps this equal to the frozen set. */
-export const LIVE_POST_OPS = [
-  'connect', 'discover', 'forget', 'prompt', 'cancel', 'permission', 'authenticate', 'elicitation', 'config', 'mode', 'cancel-pending',
-  'session-op', 'disconnect', 'queue', 'queue-edit', 'queue-remove', 'queue-move', 'queue-resume', 'queue-send-now', 'steer', 'tool-stop',
-  'schedule', 'schedule-edit', 'schedule-cancel', 'schedule-send-now',
-  'dismiss-unknown',
-  'worktree-archive',
-] as const;
+/** The generic POST /api/live/<name> calls: derived from the host's one live-op table (host/aib_live_ops.ts). */
+export const LIVE_POST_OPS: readonly string[] = [...HOST_LIVE_POST_OPS];
 
 type Json = Record<string, unknown>;
 type Reply = [number, unknown];

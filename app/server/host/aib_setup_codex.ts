@@ -17,6 +17,7 @@ import { wslHost, wslLoc } from '../wsl/access.ts';
 import { log } from './aib_util.ts';
 import { HOOKS_OFF, MAX_PRE_TOOL_WAITING, SUBAGENT_BUSY, offHooks } from './aib_helpers.ts';
 import type { Aib } from './aib.ts';
+import type { ConnectHook } from './aib_connect_hooks.ts';
 
 export const codexSetupMethods = {
   /**
@@ -167,3 +168,13 @@ export const codexSetupMethods = {
 };
 
 export type CodexSetupMethods = typeof codexSetupMethods;
+
+/** Codex's rules in Aib.connect (aib_connect_hooks.ts). */
+export const codexConnectHook: ConnectHook = {
+  // Codex (subagents/codex.ts): its hooks go in CODEX_CONFIG; hooks off or unavailable turn its subagents off instead.
+  prepare(this: Aib, x) {
+    return this.$codexSubagentHooks(x.command, x.cwd, x.workspace, x.worktree, x.env, x.spawnEnv, x.chatId, x.distro);
+  },
+  // A Codex agent starts once the chat's MCP servers are known: they go in its CODEX_CONFIG (acp/codex_mcp.ts), read at its start
+  startsLate: true,
+};

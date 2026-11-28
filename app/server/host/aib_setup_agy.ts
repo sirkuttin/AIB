@@ -17,6 +17,7 @@ import { wslHost, wslLoc } from '../wsl/access.ts';
 import { log } from './aib_util.ts';
 import { MAX_PRE_TOOL_WAITING, WSL_HOOKS_UNAVAILABLE, SUBAGENT_BUSY, offHooks } from './aib_helpers.ts';
 import type { Aib } from './aib.ts';
+import type { ConnectHook } from './aib_connect_hooks.ts';
 
 export const agySetupMethods = {
   /**
@@ -169,3 +170,27 @@ export const agySetupMethods = {
 };
 
 export type AgySetupMethods = typeof agySetupMethods;
+
+/** Antigravity's rules in Aib.connect (aib_connect_hooks.ts). */
+export const agyConnectHook: ConnectHook = {
+  exact: 'antigravity',
+  prepare(this: Aib, x) {
+    return this.$agySubagentHooks(x.command, x.cwd, x.workspace, x.worktree, x.chatId, x.distro);
+  },
+  // with hooks (an API key: its own settings folder) its subagents work in their own worktree (c.subagentHooks.prompt);
+  // otherwise AIB can only ask the agent not to start editing subagents (subagents/antigravity.ts)
+  attach(_x, c) {
+    c.subagentRule = agySub.ANTIGRAVITY_SUBAGENT_PROMPT;
+  },
+  afterSetup(this: Aib, x, c) {
+    // hooks given (an API key: AIB's own settings folder): its subagents work in their own worktree; else only asked for
+    const h = c.subagentHooks;
+    const enforced = !!h && h.adopted === true && !h.off && !!h.prompt;
+    // no system prompt capability (session/new could not carry the rule): it goes in front of the next prompt, once per opening
+    if (!c.supportsSystemPrompt()) this.addPromptContext(c, enforced ? h!.prompt! : agySub.ANTIGRAVITY_SUBAGENT_PROMPT);
+    if (!x.resume) {
+      const message = enforced ? agySub.ANTIGRAVITY_ISOLATED_NOTE : agySub.antigravityAskedNote(h?.detail || agySub.SIGNIN_WHY);
+      c.recordedEvent('studio_note', { message, sessionId: c.sessionId });
+    }
+  },
+};

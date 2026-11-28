@@ -1315,7 +1315,8 @@ export interface Aib extends ClaudeSetupMethods, GeminiSetupMethods, CodexSetupM
 installMethods(Aib, claudeSetupMethods, geminiSetupMethods, codexSetupMethods, qwenSetupMethods, agySetupMethods, copilotSetupMethods, keeperMethods, connectMethods, wslMethods, launchMethods, callMethods, viewMethods, reconnectMethods, worktreeMethods);
 
 // Moved out (no change); re-exported so every importer of this file keeps working.
-export { ARTIFACT_URL_FILE, CLOSED_GRACE_SECONDS, MAX_CLOSED_CONNECTIONS, STOPPED_HELPER_DAYS, RECONNECT_TRIES, ADOPT_WAIT_MS, LIVE_POST_OPS, KeyError, need, wslAgentOffLine, isRequestError, pythonErrorType } from './aib_util.ts';
+export { ARTIFACT_URL_FILE, CLOSED_GRACE_SECONDS, MAX_CLOSED_CONNECTIONS, STOPPED_HELPER_DAYS, RECONNECT_TRIES, ADOPT_WAIT_MS, KeyError, need, wslAgentOffLine, isRequestError, pythonErrorType } from './aib_util.ts';
+export { LIVE_POST_OPS } from './aib_live_ops.ts';
 export { LANDING_TTL_MS, readOwnCopy, readHelperOf, PROBE_COOLDOWN_SECONDS, PROBE_TIMEOUT_SECONDS, readPicks } from './aib_options.ts';
 export type { AibOptions, ConnectionFactory, OwnerProbe, ConnectOptions, AibConstruct } from './aib_options.ts';
 export { holdKeeper, chatIdOfChannel, providerOfCommand, keeperInstanceId, saveKeeperInstance, orphanCommand, reconnectKey } from './aib_helpers.ts';

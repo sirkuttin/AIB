@@ -15,6 +15,9 @@ import * as wt from '../worktrees/worktrees.ts';
 import { testHomeEnv } from '../acp/connection.ts';
 import { log } from './aib_util.ts';
 import type { Aib } from './aib.ts';
+import type { ConnectHook } from './aib_connect_hooks.ts';
+import { isBeta } from '../agents/beta_catalog.ts';
+import { baseAgent } from '../agents/claude_family.ts';
 
 export const geminiSetupMethods = {
   $sweepGeminiWithoutKeeper(this: Aib, root: string): void {
@@ -88,3 +91,28 @@ export const geminiSetupMethods = {
 };
 
 export type GeminiSetupMethods = typeof geminiSetupMethods;
+
+/** Gemini's rules in Aib.connect (aib_connect_hooks.ts). */
+export const geminiConnectHook: ConnectHook = {
+  // Gemini (subagents/gemini.ts): every chat gets the fence (an admin policy); an API-key chat in a git project also the redirect
+  async prepare(this: Aib, x) {
+    if (x.provider !== 'gemini') return null;
+    const gem = await this.$geminiSubagents(x.cwd, x.workspace, x.worktree, x.env, x.wsl, x.chatId);
+    return gem && { id: gem.id, args: gem.args, env: gem.env, gemini: gem.setup };
+  },
+  attach(x, c) {
+    const gem = x.prepared;
+    if (!gem?.gemini) return;
+    if (gem.id && c.id !== gem.id) { // another id: its hook key would not check; the fence alone holds
+      c.geminiSubagents = { ...gem.gemini, home: '', subFolder: '', off: 'it was not set up' };
+    } else c.geminiSubagents = gem.gemini;
+  },
+  async beforeSetup(this: Aib, x, c) {
+    if (isBeta(x.provider) && baseAgent(x.provider) === 'gemini') await this.$trustForGemini(c, x.distro);
+  },
+  afterSetup(_x, c) {
+    if (c.geminiSubagents?.off) { // the fence only: said up front (owner rule: refused, never in the folder)
+      c.recordedEvent('studio_note', { message: gemini.GEMINI_TEXTS.off(c.geminiSubagents.off), sessionId: c.sessionId });
+    }
+  },
+};

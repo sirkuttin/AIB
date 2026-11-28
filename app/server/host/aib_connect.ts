@@ -4,16 +4,13 @@
  */
 import { Connection, type ConnectionOptions, errorText } from '../acp/connection.ts';
 import * as agentRegistry from '../agents/agent_registry.ts';
-import { isBeta } from '../agents/beta_catalog.ts';
-import { baseAgent, isClaudeFamily, isCodexFamily, isModelServerId, isQwenFamily, serverIdOf } from '../agents/claude_family.ts';
+import { isClaudeFamily, isCodexFamily, isModelServerId, isQwenFamily, serverIdOf } from '../agents/claude_family.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { wslSubagentChatClosed } from '../wsl/subagents.ts';
 import * as codexSub from '../subagents/codex.ts';
-import * as qwenSub from '../subagents/qwen.ts';
 import * as gemini from '../subagents/gemini.ts';
 import * as agySub from '../subagents/antigravity.ts';
 import { isAntigravity } from '../subagents/antigravity.ts';
-import * as nativeOff from '../subagents/native_off.ts';
 import { isDict, isStr, pyLen, ValueError } from '../core/py.ts';
 import { OwnershipConflict, SessionLease } from '../ownership/ownership.ts';
 import { folderOnlyNote } from '../ownership/probe.ts';
@@ -29,7 +26,8 @@ import { wslEnsure, wslIsRemoved, WslPlan, wslPlanWithReason, wslRecord, wslSetS
 import { wslSyncChat } from '../wsl/sync.ts';
 import { log } from './aib_util.ts';
 import { type ConnectOptions, OWN_CONTEXT } from './aib_options.ts';
-import { HOOKS_OFF, NO_GIT_BASH, SUBAGENTS_OFF_NO_BASH, WSL_HOOKS_UNAVAILABLE, recheckSubagentHooks, offHooks } from './aib_helpers.ts';
+import { NO_GIT_BASH, SUBAGENTS_OFF_NO_BASH, recheckSubagentHooks, offHooks } from './aib_helpers.ts';
+import { type ConnectCtx, connectHookOf } from './aib_connect_hooks.ts';
 import type { Aib } from './aib.ts';
 
 export const connectMethods = {
@@ -151,63 +149,33 @@ export const connectMethods = {
       // reopens as that chat, same id, going on in its store (after an idle quit, a crash, a lost keeper, an update, Continue).
       const reopen = resume && chatKeeper && !asHelper ? await this.$storeToContinue(provider, resume, chatKeeper) : null;
       const chatId = reopen?.id ?? null;
-      // Subagent worktrees (subagents/): a Claude chat in a git project gets command hooks through the keeper's forwarder; its key and
-      // id go in the agent's environment (never in settings, a command line or a URL). A WSL chat's run in its distro ($wslClaudeHooks).
-      // Codex (subagents/codex.ts): its hooks go in CODEX_CONFIG; hooks off or unavailable turn its subagents off instead.
-      const subagent = isClaudeFamily(provider)
-        ? await this.$subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, wsl ? wsl.distro : null, chatId)
-        : isCodexFamily(provider)
-        ? await this.$codexSubagentHooks(
-          command,
-          plan ? plan.path : workspace,
-          workspace,
-          !!plan,
-          env,
-          launch ? launch.spawn.env ?? {} : null,
-          chatId,
-          wsl ? wsl.distro : null,
-        )
-        : isQwenFamily(provider)
-        ? await this.$qwenSubagentHooks(
-          command,
-          plan ? plan.path : workspace,
-          workspace,
-          !!plan,
-          env,
-          launch ? launch.spawn.env ?? {} : null,
-          chatId,
-          wsl ? wsl.distro : null,
-        )
-        : isAntigravity(provider)
-        ? await this.$agySubagentHooks(
-          command,
-          plan ? plan.path : workspace,
-          workspace,
-          !!plan,
-          chatId,
-          wsl ? wsl.distro : null,
-        )
-        : nativeOff.nativeOffAgent(provider)
-        ? this.$nativeOffSubagents(provider, command, chatId)
-        : null;
-      // Gemini (subagents/gemini.ts): every chat gets the fence (an admin policy); an API-key chat in a git project also the redirect
-      const gem = provider === 'gemini'
-        ? await this.$geminiSubagents(plan ? plan.path : workspace, workspace, !!plan, env, !!wsl, chatId)
-        : null;
+      // Each agent's connect-time rules sit behind its hook (aib_connect_hooks.ts, written in its aib_setup_<agent>.ts); connect() runs
+      // the same steps for every agent. Order kept from before the split: prepare (subagent setup, may add to env), then the options.
+      const hook = connectHookOf(provider);
+      const x: ConnectCtx = {
+        provider,
+        resume,
+        command,
+        env,
+        cwd: plan ? plan.path : workspace,
+        workspace,
+        worktree: !!plan,
+        spawnEnv: launch ? launch.spawn.env ?? {} : null,
+        chatId,
+        distro: wsl ? wsl.distro : null,
+        wsl: !!wsl,
+        prepared: null,
+        launchCommand: command,
+      };
+      const prepared = x.prepared = (await hook.prepare?.call(this, x)) ?? null;
       const connectionOptions: ConnectionOptions = {};
-      const agentEnv = { ...env, ...subagent?.env, ...gem?.env };
+      const agentEnv = { ...env, ...prepared?.env };
       if (Object.keys(agentEnv).length) connectionOptions.env = agentEnv;
-      if (subagent?.id) connectionOptions.id = subagent.id;
-      if (gem?.id) connectionOptions.id = gem.id;
+      if (prepared?.id) connectionOptions.id = prepared.id;
       if (chatId) connectionOptions.id = chatId;
-      const subArgs: string[] = subagent && 'args' in subagent && Array.isArray(subagent.args) ? subagent.args : []; // a WSL Antigravity chat's --gemini-dir
-      const launchCommand = subagent && 'command' in subagent && Array.isArray(subagent.command)
-        ? subagent.command // Maki and Copilot (subagents/native_off.ts): the flag that turns their subagents off, in its place
-        : gem
-        ? [...command, ...gem.args]
-        : subArgs.length
-        ? [...command, ...subArgs]
-        : command;
+      // the agent's own launch change: its flag in the command's place (Maki, Copilot), or arguments added (Gemini, a WSL Antigravity chat)
+      const launchCommand = prepared?.command ?? (prepared?.args?.length ? [...command, ...prepared.args] : command);
+      x.launchCommand = launchCommand;
       if (launch) {
         connectionOptions.keeper = launch.link; // the distro's Linux keeper, whatever the Windows keeper's state
         // a new worktree chat's agent works in the worktree's Linux folder (cwd: its ref)
@@ -216,26 +184,17 @@ export const connectMethods = {
       if (connectionOptions.keeper) connectionOptions.history = this.historyClient();
       if (reopen && connectionOptions.history) connectionOptions.continueStore = reopen.store;
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
-      // A Codex agent starts once the chat's MCP servers are known: they go in its CODEX_CONFIG (acp/codex_mcp.ts), read at its start
-      const codexLate = !plan && isCodexFamily(provider);
-      if (codexLate) connectionOptions.start = false;
-      // A Copilot agent too: its MCP config file (agents/copilot_mcp.ts) names the chat's servers, known once the connection exists
-      const copilotLate = !plan && baseAgent(provider) === 'copilot';
-      if (copilotLate) connectionOptions.start = false;
+      // Codex and Copilot start once the chat's MCP servers are known (their hooks say startsLate): their config is read at their start
+      const startsLate = !plan && !!hook.startsLate;
+      if (startsLate) connectionOptions.start = false;
       connection = Object.keys(connectionOptions).length
         ? this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider, connectionOptions)
         : this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider);
       const c = connection;
-      if (gem) {
-        if (gem.id && c.id !== gem.id) { // another id: its hook key would not check; the fence alone holds
-          c.geminiSubagents = { ...gem.setup, home: '', subFolder: '', off: 'it was not set up' };
-        } else c.geminiSubagents = gem.setup;
-      }
-      // Antigravity: with hooks (an API key: its own settings folder) its subagents work in their own worktree (c.subagentHooks.prompt);
-      // otherwise AIB can only ask the agent not to start editing subagents (subagents/antigravity.ts)
-      if (isAntigravity(provider)) c.subagentRule = agySub.ANTIGRAVITY_SUBAGENT_PROMPT;
+      // The agent's own fields first (Gemini's fence, Antigravity's rule), then the subagent hooks state, as before the split.
+      hook.attach?.call(this, x, c);
       // a factory that gave the chat another id: its hooks' key would not check, so it gets none (it would fail closed otherwise)
-      if (subagent) c.subagentHooks = !subagent.id || c.id === subagent.id ? subagent.hooks : offHooks('not set up');
+      if (prepared?.hooks) c.subagentHooks = !prepared.id || c.id === prepared.id ? prepared.hooks : offHooks('not set up');
       if (plan || record) {
         c.worktree = plan ? { branch: plan.branch, base: plan.base } : { branch: String(record!.branch), base: String(record!.base ?? '') };
         c.projectRoot = plan ? workspace : String(record!.project); // cwd is the worktree, projectRoot the project
@@ -256,8 +215,8 @@ export const connectMethods = {
         const helper = c.swarm?.role === 'helper'; // a helper gets neither the merge tools (review break 3) nor the swarm tools
         c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree && !helper, forwarder, this.$isMain(c))];
       }
-      if (baseAgent(provider) === 'copilot') toolsNotice = await this.$copilotTools(c, launchCommand, wsl ? wsl.distro : null) || toolsNotice;
-      if (codexLate || copilotLate) c.startProcess();
+      if (hook.tools) toolsNotice = await hook.tools.call(this, x, c) || toolsNotice; // Copilot: its MCP config file, before its late start
+      if (startsLate) c.startProcess();
       c.sessionId = resume || null;
       if (!resume && options.picks) c.startPicks = { ...options.picks };
       c.recovery = this.recovery as never;
@@ -279,50 +238,20 @@ export const connectMethods = {
           c.localOnly = wsl ? await wslChatLocalOnly(c.worktree ? c.projectRoot : c.cwd, !!c.worktree) : this.$localOnlyFor(c, local);
           // allow rules of a WSL chat: its folder and the distro's base facts, read while the agent starts (allow/wsl_facts.ts)
           const warming = wsl && this.allow ? c.allowWarm() : null;
-          if (isBeta(provider) && baseAgent(provider) === 'gemini') await this.$trustForGemini(c, wsl ? wsl.distro : null);
+          await hook.beforeSetup?.call(this, x, c); // Gemini: trust for its folder
           await c.setup(resume || null);
           if (warming) await warming; // bounded by the helper call's own time limit; never throws
-          if (isClaudeFamily(c.provider) && c.subagentHooks?.off === HOOKS_OFF) { // design 2.6: said up front, before a subagent edits the folder (P0 A7)
-            c.recordedEvent('studio_note', {
-              message: `Subagents that edit files are off in this chat: hooks are off in your Claude Code settings ` +
-                `(${c.subagentHooks.detail}), so AIB can't give them their own worktree. Read-only subagents (Explore, Plan) still work.`,
-              sessionId: c.sessionId,
-            });
-          } else if (isClaudeFamily(c.provider) && c.subagentHooks?.off === WSL_HOOKS_UNAVAILABLE) { // WSL: said up front, never unisolated
-            c.recordedEvent('studio_note', {
-              message: `Subagents are off in this chat: AIB could not set up their own worktree in this WSL distro (${c.subagentHooks.detail}).`,
-              sessionId: c.sessionId,
-            });
+          // The first chat line about subagents being off: the agent's own (Claude's), else the generic ones. Then the agent's own
+          // prompt rule and lines (afterSetup); an agent has one hook, so no two agents' lines mix.
+          const offNote = hook.offNote?.call(this, x, c) ?? null;
+          if (offNote) {
+            c.recordedEvent('studio_note', { message: offNote, sessionId: c.sessionId });
           } else if (c.subagentHooks?.off === NO_GIT_BASH) {
             c.recordedEvent('studio_note', { message: SUBAGENTS_OFF_NO_BASH, sessionId: c.sessionId });
-          } else if (subagent && 'note' in subagent && subagent.note && !(resume && nativeOff.nativeOffAgent(provider))) { // Codex, Maki, Copilot: its subagents are off (Maki and Copilot: said once, in a new chat)
-            c.recordedEvent('studio_note', { message: subagent.note, sessionId: c.sessionId });
+          } else if (prepared && prepared.note && !(resume && hook.noteInNewChatOnly)) { // Codex, Maki, Copilot: its subagents are off (Maki and Copilot: said once, in a new chat)
+            c.recordedEvent('studio_note', { message: prepared.note, sessionId: c.sessionId });
           }
-          if (isQwenFamily(provider) && c.subagentHooks?.prompt) {
-            // Qwen advertises no system prompt capability: the rule goes in front of the next prompt, once per opening
-            if (!c.supportsSystemPrompt()) this.addPromptContext(c, c.subagentHooks.prompt);
-            if (!resume && c.subagentHooks.adopted === true && !c.subagentHooks.off) {
-              c.recordedEvent('studio_note', { message: qwenSub.QWEN_SUBAGENT_NOTE, sessionId: c.sessionId });
-            }
-          }
-          if (nativeOff.nativeOffAgent(provider) && c.subagentHooks?.prompt) {
-            // neither Maki nor Copilot advertises a system prompt capability: the rule goes in front of the next prompt, once per opening
-            if (!c.supportsSystemPrompt()) this.addPromptContext(c, c.subagentHooks.prompt);
-          }
-          if (isAntigravity(provider)) {
-            // hooks given (an API key: AIB's own settings folder): its subagents work in their own worktree; else only asked for
-            const h = c.subagentHooks;
-            const enforced = !!h && h.adopted === true && !h.off && !!h.prompt;
-            // no system prompt capability (session/new could not carry the rule): it goes in front of the next prompt, once per opening
-            if (!c.supportsSystemPrompt()) this.addPromptContext(c, enforced ? h!.prompt! : agySub.ANTIGRAVITY_SUBAGENT_PROMPT);
-            if (!resume) {
-              const message = enforced ? agySub.ANTIGRAVITY_ISOLATED_NOTE : agySub.antigravityAskedNote(h?.detail || agySub.SIGNIN_WHY);
-              c.recordedEvent('studio_note', { message, sessionId: c.sessionId });
-            }
-          }
-          if (c.geminiSubagents?.off) { // the fence only: said up front (owner rule: refused, never in the folder)
-            c.recordedEvent('studio_note', { message: gemini.GEMINI_TEXTS.off(c.geminiSubagents.off), sessionId: c.sessionId });
-          }
+          hook.afterSetup?.call(this, x, c);
           if (plan instanceof WslPlan) {
             if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
           } else if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);

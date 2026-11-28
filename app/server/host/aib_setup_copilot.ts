@@ -10,6 +10,7 @@ import { readyHost } from '../wsl/access.ts';
 import { log } from './aib_util.ts';
 import { offHooks } from './aib_helpers.ts';
 import type { Aib } from './aib.ts';
+import type { ConnectHook } from './aib_connect_hooks.ts';
 
 export const copilotSetupMethods = {
   /**
@@ -59,3 +60,24 @@ export const copilotSetupMethods = {
 };
 
 export type CopilotSetupMethods = typeof copilotSetupMethods;
+
+/** Maki's rules in Aib.connect (aib_connect_hooks.ts); Copilot's are these plus its tools and its late start. */
+export const makiConnectHook: ConnectHook = {
+  // Maki and Copilot (subagents/native_off.ts): the flag that turns their subagents off, in the launch command's place
+  prepare(this: Aib, x) {
+    return this.$nativeOffSubagents(x.provider, x.command, x.chatId);
+  },
+  noteInNewChatOnly: true, // said once, in a new chat
+  afterSetup(this: Aib, _x, c) {
+    // neither Maki nor Copilot advertises a system prompt capability: the rule goes in front of the next prompt, once per opening
+    if (c.subagentHooks?.prompt && !c.supportsSystemPrompt()) this.addPromptContext(c, c.subagentHooks.prompt);
+  },
+};
+export const copilotConnectHook: ConnectHook = {
+  ...makiConnectHook,
+  // A Copilot agent starts once its MCP config file (agents/copilot_mcp.ts) names the chat's servers, known once the connection exists
+  startsLate: true,
+  tools(this: Aib, x, c) {
+    return this.$copilotTools(c, x.launchCommand, x.distro);
+  },
+};

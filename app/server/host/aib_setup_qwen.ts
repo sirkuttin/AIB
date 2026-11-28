@@ -17,6 +17,7 @@ import { wslHost, wslLoc } from '../wsl/access.ts';
 import { log } from './aib_util.ts';
 import { HOOKS_OFF, MAX_PRE_TOOL_WAITING, WSL_HOOKS_UNAVAILABLE, SUBAGENT_BUSY, offHooks } from './aib_helpers.ts';
 import type { Aib } from './aib.ts';
+import type { ConnectHook } from './aib_connect_hooks.ts';
 
 export const qwenSetupMethods = {
   /**
@@ -171,3 +172,19 @@ export const qwenSetupMethods = {
 };
 
 export type QwenSetupMethods = typeof qwenSetupMethods;
+
+/** Qwen's rules in Aib.connect (aib_connect_hooks.ts). */
+export const qwenConnectHook: ConnectHook = {
+  prepare(this: Aib, x) {
+    return this.$qwenSubagentHooks(x.command, x.cwd, x.workspace, x.worktree, x.env, x.spawnEnv, x.chatId, x.distro);
+  },
+  afterSetup(this: Aib, x, c) {
+    if (c.subagentHooks?.prompt) {
+      // Qwen advertises no system prompt capability: the rule goes in front of the next prompt, once per opening
+      if (!c.supportsSystemPrompt()) this.addPromptContext(c, c.subagentHooks.prompt);
+      if (!x.resume && c.subagentHooks.adopted === true && !c.subagentHooks.off) {
+        c.recordedEvent('studio_note', { message: qwenSub.QWEN_SUBAGENT_NOTE, sessionId: c.sessionId });
+      }
+    }
+  },
+};
