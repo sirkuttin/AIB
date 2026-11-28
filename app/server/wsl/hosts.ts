@@ -647,6 +647,10 @@ export class WslHostImpl implements WslHost {
       }, timeoutMs);
       this.#pending.set(id, { resolve, reject, timer });
     });
+    // The timer can fire while the write below is still waiting (a busy distro): with no handler on `answer` yet, that rejection was
+    // unhandled and ended AIB (crash.log 2026-11-27: "env.get in Ubuntu took longer than 3 s", 3 exits in 35 min). The await below
+    // still gets the rejection; this only marks it handled.
+    answer.catch(() => {});
     const line = ENC.encode(JSON.stringify({ jsonrpc: '2.0', id, method, params: params ?? {} }) + '\n');
     if (!await helper.write(line)) {
       const pending = this.#pending.get(id);
