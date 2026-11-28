@@ -31,7 +31,7 @@ import { clip, isDict, pyStrip, ValueError } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { pidAlive } from '../host/host_client.ts';
 import { localOnlyOf } from './local_only.ts';
-import { copySharedIn, linkShared, syncSharedBackFor, unlinkSharedFor } from './shared_link.ts';
+import { linkShared, unlinkSharedFor } from './shared_link.ts';
 import { WSL_REF_PREFIX } from '../wsl/contract.ts';
 
 const log = getLogger('worktrees');
@@ -1279,36 +1279,12 @@ export async function giveSharedLink(path: string, project: string): Promise<voi
 }
 
 /**
- * A Claude Code subagent's worktree gets a REAL `aib-shared/` (a copy), because Claude Code refuses writes through the link to the
- * main folder before any hook runs (shared_link.ts copySharedIn). Never throws.
- */
-export async function giveSharedCopy(path: string, project: string): Promise<void> {
-  let lo = null;
-  try {
-    lo = await localOnlyOf(project);
-  } catch { /* no local-only lookup: nothing to copy */ }
-  const outcome = copySharedIn(path, lo, (text) => log.warning('%s', text));
-  if (outcome === 'linked') say(`Worktree: copied aib-shared from ${project} into ${path}`);
-}
-
-/** What a builder wrote in its worktree's aib-shared/ copy goes into the main folder's (shared_link.ts syncSharedBack). Never throws. */
-export async function copySharedBack(path: string, project: string): Promise<void> {
-  try {
-    const copied = await syncSharedBackFor(path, project, (text) => log.warning('%s', text));
-    if (copied.length) say(`Worktree: copied ${copied.length} aib-shared file(s) from ${path} into ${project}`);
-  } catch (error) {
-    log.warning('aib-shared copy back from %s failed: %s', path, error instanceof Error ? error.message : error);
-  }
-}
-
-/**
  * Before a worktree is removed: its `aib-shared` link goes first (the link only: `git worktree remove` and a recursive delete
  * follow a junction and would empty the main folder's real folder). False when the link could not be removed (nothing is deleted).
  */
 export async function dropSharedLink(record: WorktreeRecord): Promise<boolean> {
   const path = str(record.path), project = str(record.project);
   if (!lexists(path)) return true;
-  if (project && isdir(project)) await copySharedBack(path, project); // a Claude builder's own aib-shared/ copy goes back first
   if (await unlinkSharedFor(path, project)) return true;
   log.warning('Could not remove the aib-shared link in %s; the worktree stays', path);
   return false;

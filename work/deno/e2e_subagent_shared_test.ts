@@ -1,8 +1,9 @@
 /**
- * Claude builders and the project's aib-shared/ (owner rule 2026-11-25): e2e with the REAL Claude Code adapter against the stub model
- * API (test auth guard: loopback base URL, dummy key, temp config). A worktree-isolated editing subagent writes `aib-shared/x`
- * through its worktree's link and the file lands in the main folder's aib-shared/; a write to the main folder outside aib-shared/ is
- * still refused. See subagents/shared_fence.ts and the PreToolUse handling in subagents/service.ts.
+ * Claude builders and the project's aib-shared/ (owner rule 2026-11-25, link design since 0.13): e2e with the REAL Claude Code adapter
+ * against the stub model API (test auth guard: loopback base URL, dummy key, temp config). A worktree-isolated editing subagent has the
+ * same aib-shared link as every provider (never a copy): it reads through it normally, and a SHELL write into it lands in the main
+ * folder's real aib-shared/ at once. Claude Code's own fence refuses the Write and Edit tools there (before any hook runs), and every
+ * write to the main folder outside aib-shared/ stays refused.
  */
 import { assert, assertEquals, Chat, git, Json, waitFor } from "./_e2e.ts";
 import {
@@ -58,42 +59,28 @@ function rules(main: string) {
       }),
     },
     {
+      // the Write tool through the link: refused by Claude Code's fence
       when: "toolu_s01",
       capture: WT,
       reply: tool("toolu_s02", "Write", {
-        file_path: "@CAP@\\aib-shared\\via-link.txt",
-        content: "via link\n",
+        file_path: "@CAP@\\aib-shared\\via-tool.txt",
+        content: "via the Write tool\n",
       }),
     },
     {
+      // a Read through the link is normal
       when: "toolu_s02",
       capture: WT,
-      reply: tool("toolu_s03", "Write", {
-        file_path: "@CAP@\\aib-shared\\deep\\er\\nested.txt",
-        content: "nested\n",
+      reply: tool("toolu_s03", "Read", {
+        file_path: "@CAP@\\aib-shared\\seed.txt",
       }),
     },
     {
+      // a shell write into the link path lands in the main folder's real aib-shared/ at once
       when: "toolu_s03",
       capture: WT,
-      reply: tool("toolu_s03r", "Read", {
-        file_path: "@CAP@\\aib-shared\\via-link.txt",
-      }),
-    },
-    {
-      when: "toolu_s03r",
-      capture: WT,
-      reply: tool("toolu_s04", "Edit", {
-        file_path: "@CAP@\\aib-shared\\via-link.txt",
-        old_string: "via link",
-        new_string: "edited via link",
-      }),
-    },
-    {
-      when: "toolu_s04",
-      capture: WT,
       reply: tool("toolu_s05", "Bash", {
-        command: 'echo from-bash > "@CAP@\\aib-shared\\bash.txt"',
+        command: 'echo from-bash > "@CAP@\\aib-shared\\bash.txt"; echo more >> "@CAP@\\aib-shared\\seed.txt"',
         description: "shell write",
       }),
     },
@@ -125,7 +112,7 @@ function rules(main: string) {
 
 Deno.test({
   name:
-    "ClaudeSharedFolderTest test_builder_writes_aib_shared_and_nothing_else_of_the_main_folder",
+    "ClaudeSharedFolderTest test_builder_shell_writes_aib_shared_through_the_link_and_nothing_else_of_the_main_folder",
   ignore: !(ok && SERVER_SPLIT),
   ...T,
   async fn() {
@@ -175,46 +162,17 @@ Deno.test({
       sent,
     );
     assert((stubText(stub) + sent).includes("PARENT-DONE"));
-    // the copy goes back when the builder ends (its record turns done), so the files are in the main folder shortly after
     const shared = join(project, "aib-shared");
-    await waitFor(
-      () => Promise.resolve(read(join(shared, "bash.txt")) !== null),
-      "the builder's aib-shared files in the main folder",
-      60,
-    );
-    assertEquals(
-      read(join(shared, "via-link.txt")),
-      "edited via link\n",
-      "Write then Edit of aib-shared/x in the worktree",
-    );
-    assertEquals(
-      read(join(shared, "deep", "er", "nested.txt")),
-      "nested\n",
-      "a new nested folder",
-    );
-    assertEquals(read(join(shared, "bash.txt"))?.trim(), "from-bash");
-    assertEquals(
-      read(join(shared, "seed.txt")),
-      "seed\n",
-      "what was there stays",
-    );
-    assertEquals(
-      read(join(shared, ".aib-seed.json")),
-      null,
-      "the seed note is never copied back",
-    );
-    // every other write to the main folder stays refused (Claude Code's own fence), whatever the path form
-    assertEquals(
-      read(join(shared, "via-main.txt")),
-      null,
-      "a write by the main-folder path",
-    );
+    // a link, no copy: the shell write is in the main folder's real aib-shared/ at once (the worktree is the builder's, its link is not a copy)
+    assertEquals(read(join(shared, "bash.txt"))?.trim(), "from-bash", "a shell write through the link");
+    assertEquals(read(join(shared, "seed.txt")), "seed\nmore\n", "an existing shared file changed by a shell write");
+    assertEquals(read(join(shared, "via-tool.txt")), null, "the Write tool is refused through the link (Claude Code's own fence)");
+    assertEquals(read(join(shared, ".aib-seed.json")), null, "no seed note, no copy");
+    // every other write to the main folder stays refused, whatever the path form
+    assertEquals(read(join(shared, "via-main.txt")), null, "a Write by the main-folder path");
     assertEquals(read(join(project, "escape-write.txt")), null);
     assertEquals(read(join(project, "aib-shared-old", "sneak.txt")), null);
-    assert(
-      sent.includes("Edit the worktree copy of this file"),
-      "the refusals reached the model",
-    );
+    assert(sent.includes("worktree"), "the refusals reached the model");
     // nothing of it is committed or shows in git
     assertEquals(git(project, "status", "--porcelain"), "");
     assert(!git(project, "ls-files").includes("aib-shared"));

@@ -20,7 +20,6 @@ import {
 } from '../../app/server/subagents/claude_config.ts';
 import { ArtifactMcpHttp, CONVERSATION_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, HOOK_PROOF_HEADER } from '../../app/server/artifacts/mcp_http.ts';
 import { landingWords, MAX_PER_CHAT, readSubagents, type SubagentChat, SubagentWorktrees, TEXTS, unlinkLinks } from '../../app/server/subagents/service.ts';
-import * as wt from '../../app/server/worktrees/worktrees.ts';
 import { ensureDefault } from '../../app/server/worktrees/local_only.ts';
 import { ignoredFiles } from '../../app/server/swarm/service.ts';
 import { subagentEnd } from '../../app/server/acp/connection.ts';
@@ -372,7 +371,7 @@ Deno.test('P3: subagentEnd reads the adapter\'s RFD end states', () => {
   assertEquals(subagentEnd({ state: 'failed' }), 'error');
 });
 
-Deno.test('aib-shared: a (non-Claude) subagent worktree gets the link; a file it writes there is in the main folder at once; removal keeps it', async () => {
+Deno.test('aib-shared: a subagent worktree gets the link; a file it writes there is in the main folder at once; removal keeps it', async () => {
   const dir = Deno.makeTempDirSync({ prefix: 'aib-subshared-' });
   try {
     const state = join(dir, 'state'), root = join(state, 'worktrees');
@@ -380,8 +379,8 @@ Deno.test('aib-shared: a (non-Claude) subagent worktree gets the link; a file it
     assertEquals((await ensureDefault(project))?.defaultState, 'on', '/aib-shared in the temp repo\'s own exclude');
     const chat: SubagentChat = {
       id: 'aa11bb22cc',
-      provider: 'codex',
-      lasting: 'codex:s9',
+      provider: 'claude',
+      lasting: 'claude:s9',
       folder: project,
       project,
       hooks: { readOnly: new Set(), userWorktreeHook: false },
@@ -406,31 +405,6 @@ Deno.test('aib-shared: a (non-Claude) subagent worktree gets the link; a file it
   }
 });
 
-Deno.test('aib-shared: a Claude subagent worktree gets a real copy (Claude Code refuses the link); its files are no reason to keep the worktree and go back on removal', async () => {
-  const dir = Deno.makeTempDirSync({ prefix: 'aib-subshared-c-' });
-  try {
-    const state = join(dir, 'state'), root = join(state, 'worktrees');
-    const project = repo(join(dir, 'proj'));
-    assertEquals((await ensureDefault(project))?.defaultState, 'on');
-    Deno.mkdirSync(join(project, 'aib-shared'));
-    Deno.writeTextFileSync(join(project, 'aib-shared', 'seed.md'), 'seed\n');
-    const chat: SubagentChat = { id: 'aa11bb22dd', provider: 'claude', lasting: 'claude:s9', folder: project, project, hooks: { readOnly: new Set(), userWorktreeHook: false } };
-    const service = new SubagentWorktrees(state, root, (id) => (id === chat.id ? chat : null));
-    await service.hook('pre-tool', chat.id, { tool_name: 'Agent', tool_use_id: 'toolu_s', tool_input: { prompt: 'x', subagent_type: 'general-purpose' } });
-    const path = (await service.hook('worktree-create', chat.id, { name: 'agent-s1' })).body;
-    assert(!Deno.lstatSync(join(path, 'aib-shared')).isSymlink, 'a real folder');
-    assertEquals(Deno.readTextFileSync(join(path, 'aib-shared', 'seed.md')), 'seed\n');
-    Deno.writeTextFileSync(join(path, 'aib-shared', 'draft.md'), 'from the subagent\n');
-    assertEquals(git(path, 'status', '--porcelain', '--untracked-files=all'), '', 'git shows nothing');
-    assertEquals(await ignoredFiles(path), [], 'its copy is no reason to keep the worktree');
-    // the removal path (dropSharedLink) copies it back first
-    await wt.copySharedBack(path, project);
-    assertEquals(Deno.readTextFileSync(join(project, 'aib-shared', 'draft.md')), 'from the subagent\n');
-    assertEquals(git(project, 'status', '--porcelain', '--untracked-files=all'), '');
-  } finally {
-    Deno.removeSync(dir, { recursive: true });
-  }
-});
 
 Deno.test('the hook routes: deny, pass, bind, cap, closed chats, hints; never allow; only AIB-made unbound worktrees go', async () => {
   const dir = Deno.makeTempDirSync({ prefix: 'aib-subroutes-' });
