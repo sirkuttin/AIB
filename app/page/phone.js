@@ -3456,7 +3456,7 @@
       card.dataset.menuKey = key;
       cardItems.set(key, item);
     }
-    const wrap = el('div', 'ph-cw' + (copy ? ' ph-copy-ok' : '') + (item.kind === 'live' && c.under && item.sub ? ' ph-sub' : ''));
+    const wrap = el('div', 'ph-cw' + (copy ? ' ph-copy-ok' : '') + (item.kind === 'live' && c.under && item.sub ? ' ph-helper-row' : ''));
     wrap.setAttribute('data-rk', key);
     const more = button('ph-more-btn', '⋯', () => openCardMenu(item));
     more.disabled = opening;

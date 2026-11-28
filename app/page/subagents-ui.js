@@ -810,6 +810,7 @@
     childrenOf,
     nest,
     render,
+    folded: (convKey, openDefault) => !expanded(convKey, openDefault), // is this chat's "N finished" fold closed (the Activity diff reads it)
     enrich,
     noteEvent,
     span,

@@ -9,6 +9,7 @@
  */
 import type { WslHost } from './contract.ts';
 import { getLogger } from '../core/log.ts';
+import { clearMemos } from '../core/memo.ts';
 
 const log = getLogger('wsl');
 
@@ -132,6 +133,7 @@ export class WslUrlGate {
     if (this.#waiting.some((w) => w.distro === key && w.url === clean)) return 'asked';
     this.#waiting.push({ id: crypto.randomUUID(), distro: key, url: clean, at: now });
     while (this.#waiting.length > MAX_WAITING) this.#waiting.shift();
+    clearMemos(); // the kept WSL status answer carries the waiting URLs: the page's next poll must see this one
     return 'asked';
   }
 
@@ -145,6 +147,7 @@ export class WslUrlGate {
     const at = this.#waiting.findIndex((w) => w.id === id);
     if (at < 0 || (action !== 'open' && action !== 'always' && action !== 'dismiss')) return false;
     const [request] = this.#waiting.splice(at, 1);
+    clearMemos();
     if (action === 'always') {
       this.#allowSet().add(request.distro);
       this.#saveAllowed();

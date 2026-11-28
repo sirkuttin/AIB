@@ -10,6 +10,7 @@
  * Without a state folder (unit tests that set none) the flags live in memory only.
  */
 import { wslStateDir } from './hosts.ts';
+import { clearMemos } from '../core/memo.ts';
 
 export const FILE = 'wsl-removed.json';
 export const MAX_WORKTREES = 2000;
@@ -32,6 +33,7 @@ let dirForTests: string | null | undefined;
 /** Tests: where the file goes (null: memory only; undefined: the hosts' state folder). Clears the memory copy. */
 export function setRemovedDir(dir: string | null | undefined): void {
   dirForTests = dir;
+  clearMemos();
   memory = { distros: {}, worktrees: {} };
 }
 
@@ -54,6 +56,7 @@ function read(): State {
 }
 
 function write(state: State): void {
+  clearMemos(); // the kept WSL status answer (web/wsl_routes.ts) says removed or not
   const path = file();
   if (!path) {
     memory = state;

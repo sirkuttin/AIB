@@ -271,7 +271,8 @@
 
   // ---- talking to the server --------------------------------------------------------------------------------------------------
   function remember(path, d) {
-    const list = d.servers;
+    // an answer without servers (an older or stand-in host) is cached as "nothing to choose", like a failed read
+    const list = d && Array.isArray(d.servers) ? d.servers : [];
     chipCache.set(path, { on: list.filter((s) => s.on).length, total: list.length, others: list.some((s) => !s.locked), at: Date.now() });
   }
   function load() {

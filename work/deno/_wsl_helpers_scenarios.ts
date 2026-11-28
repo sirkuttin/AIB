@@ -248,9 +248,11 @@ export async function listedAndFork(env: Env): Promise<void> {
     const sumId = String((made2 as Json).helper);
     await until('the summary fork open', () => lab.swarm.registry.get(sumId)?.fork?.how === 'summary');
     const sum = lab.swarm.registry.get(sumId)!;
-    await until('the summary sent', () => lab.prompts(sum.chat.live).length === 1);
-    const first = lab.prompts(sum.chat.live)[0];
-    assert(first.startsWith('Summary of “Login chat”') && first.includes('Fix the login page'), first.slice(0, 120));
+    // the summary is no turn: it is put in front of the user's first message (prompt-context) and the chat shows a note
+    const given = () => lab.calls.filter(([n, b]) => n === 'prompt-context' && b.id === sum.chat.live).map(([, b]) => String(b.line ?? ''));
+    await until('the summary given', () => given().length === 1);
+    assert(given()[0].startsWith('Summary of “Login chat”') && given()[0].includes('Fix the login page'), given()[0].slice(0, 120));
+    assertEquals(lab.prompts(sum.chat.live), [], 'no prompt: it waits for the first message');
     // forks and asked-for chats are not agent-started helpers: only the plain one holds a place of the cap
     const caps = ((await lab.swarm.tool(PARENT, 'helper_providers', {}))[1] as { caps: Json }).caps;
     assertEquals(caps.running, 1);

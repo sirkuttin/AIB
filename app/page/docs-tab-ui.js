@@ -117,7 +117,9 @@
     const docsId = () => {
       if (chatId) return chatId;
       const W = win.AgentWorkspaceUI,
-        path = project && W && typeof W.projectPathOf === 'function' ? W.projectPathOf(project) : '';
+        // before the first header render hands this panel its project (a doc opened from the desktop app), the window's own project
+        pk = project || (W && typeof W.currentProject === 'function' ? W.currentProject() : ''),
+        path = pk && W && typeof W.projectPathOf === 'function' ? W.projectPathOf(pk) : '';
       return path ? 'project:' + path : '';
     };
     let askedFor = '';

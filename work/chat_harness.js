@@ -152,6 +152,7 @@ function makePage({ routes = {}, window: extraWindow = {}, scripts = [], local =
     return {
       ok: result.status === undefined || result.status < 400,
       status: result.status || 200,
+      headers: { get: () => null }, // a real Response has headers (the page reads ETag from the polled routes)
       json: async () => result.body,
     };
   };
@@ -174,6 +175,7 @@ function makePage({ routes = {}, window: extraWindow = {}, scripts = [], local =
     window: { addEventListener() {}, ...extraWindow },
     fetch,
     URLSearchParams,
+    structuredClone,
     AbortController,
     URL,
     console,

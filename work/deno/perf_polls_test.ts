@@ -147,7 +147,7 @@ Deno.test({
 
 Deno.test({
   name:
-    "a hidden window stops polling its lists, Activity and docs; showing it again reads at once",
+    "a hidden window stops polling Activity, docs and the rest and keeps only the conversation list (notifications); showing it again reads at once",
   ignore: !browserPath,
   sanitizeResources: false,
   sanitizeOps: false,
@@ -182,12 +182,15 @@ Deno.test({
       const polls = hidden.filter((r) =>
         !/presence|devices|folders\/gone|bootstrap/.test(r.p)
       );
+      // the one poll a hidden window keeps is the conversation list (list, ownership, sessions: 3 reads), every 10 s, because the
+      // page raises desktop notifications from it while the window is away (owner test: test_chat_page.js, since 0.1.0-beta.1);
+      // Activity, mirrors, docs, files, changes, WSL and the inbox read nothing
+      const keep = /^\/api\/(live\/list|live\/ownership|sessions)(\?|$)/;
       assert(
-        polls.length <= 4,
-        `hidden for 20 s: ${polls.length} polls (${
-          [...new Set(polls.map((r) => r.p))].join(", ")
-        }), want at most 4`,
+        polls.every((r) => keep.test(r.p)),
+        `hidden for 20 s: only the conversation list polls, got ${[...new Set(polls.map((r) => r.p))].join(", ")}`,
       );
+      assert(polls.length <= 6, `hidden for 20 s: ${polls.length} list reads, want at most 6 (two list polls)`);
       await lab.page.eval(
         `Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' }); document.dispatchEvent(new Event('visibilitychange')); 0`,
       );

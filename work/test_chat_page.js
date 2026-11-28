@@ -29,12 +29,12 @@ const user = (value, time) => ({ role: 'user', label: 'You', value, time });
 const turnEnd = (time) => ({ role: 'turn-end', label: 'Turn finished', value: 'end_turn', time });
 
 /* ---- what chat.js still gives the other scripts, now that it is an IIFE ---- */
-test('chat.js puts exactly these things on window: the image check tool-views.js uses, the GET helper, the view hooks and the test hook', () => {
+test('chat.js puts exactly these things on window: the image check tool-views.js uses, the GET helper, the view hooks, the tool servers host and the test hook', () => {
   const page = makePage();
   const exported = Object.keys(page.context.window)
     .filter((name) => name !== 'addEventListener' && name !== 'ChatCache') // ChatCache: chat-cache.js's own, loaded before chat.js
     .sort();
-  assert.deepEqual(exported, ['AgentChatView', 'AgentStudioGet', 'StudioChat', 'safeImageBlock']);
+  assert.deepEqual(exported, ['AIBToolServersHost', 'AgentChatView', 'AgentStudioGet', 'StudioChat', 'safeImageBlock']); // AIBToolServersHost: what Settings > Tool servers asks of this page
   assert.equal(page.context.window.safeImageBlock({ type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }), true);
   assert.equal(
     page.context.window.safeImageBlock({ type: 'image', mimeType: 'image/svg+xml', data: 'aGVsbG8=' }),
@@ -266,26 +266,26 @@ const liveState = {
 };
 // the chat poll ticks every 500 ms and polls at 1.5 s (5 s in a background window, multi-window Phase 3)
 const chatPollers = (page) => page.intervals.filter((i) => i.ms === 500).map((i) => i.fn);
-const listPoller = (page) => page.intervals.find((i) => i.ms === 5000).fn;
 
 test('while the tab is hidden the 1.5 s chat poll pauses and the conversation-list poll keeps running', async () => {
-  const page = makePage({ routes: { ...listRoutes, ...liveState } });
+  // __aibTestListScale shortens the list poll's period (10 s hidden) to 10 ms, so the test only waits a moment for it to be due
+  const page = makePage({ routes: { ...listRoutes, ...liveState }, window: { __aibTestListScale: 1000 } });
   await page.hook.refreshToken();
+  await new Promise((resolve) => setTimeout(resolve, 30));
   page.state.selected = { provider: 'omp', id: 'sess-1', cwd: 'C:/proj', key: 'live:conn-1', title: 'T' };
   page.state.current = 'conn-1';
-  page.document.hidden = false;
-  for (const poll of chatPollers(page)) poll();
-  await page.tick();
-  assert.equal(stateCalls(page), 1, 'a visible tab polls the chat');
+  // hidden first: the list poll is throttled by its own last run, so a visible tick first would hide the hidden one
   page.document.hidden = true;
   const before = stateCalls(page),
     listsBefore = listCalls(page);
-  for (const poll of chatPollers(page)) poll();
+  for (const poll of chatPollers(page)) poll(); // every 500 ms tick: the chat poll, the list poll, the Activity ticks
   await page.tick();
   assert.equal(stateCalls(page), before, 'a hidden tab does not poll the chat');
-  listPoller(page)();
-  await page.tick();
   assert.equal(listCalls(page), listsBefore + 1, 'the conversation list still polls, for desktop notifications');
+  page.document.hidden = false;
+  for (const poll of chatPollers(page)) poll();
+  await page.tick();
+  assert.equal(stateCalls(page), before + 1, 'a visible tab polls the chat');
 });
 
 test('showing the tab again refreshes the chat at once', async () => {

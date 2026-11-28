@@ -97,6 +97,7 @@ function harness(routes, { confirmResult = true } = {}) {
     return {
       ok: result.status === undefined || result.status < 400,
       status: result.status || 200,
+      headers: { get: () => null },
       json: async () => result.body,
     };
   };
@@ -122,6 +123,7 @@ function harness(routes, { confirmResult = true } = {}) {
     },
     clearTimeout,
     URLSearchParams,
+    structuredClone,
     AbortController,
     URL,
     console,

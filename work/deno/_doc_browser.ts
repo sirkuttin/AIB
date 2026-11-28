@@ -81,6 +81,8 @@ export async function aib(root?: string, port = 0, state?: string) {
     cliPort: 0,
     transcripts: {
       sessionCwd: () => Promise.resolve(project),
+      sessions: () => Promise.resolve([]), // the page lists saved chats as soon as it loads (/api/sessions)
+      root: state,
     } as unknown as Source,
     claudeProjects: state,
     ompSessions: state,

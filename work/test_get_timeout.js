@@ -18,6 +18,7 @@ test('the page GET timeout outlasts the server wait for a chat being taken over'
   const pageMs = Number(page[1]),
     serverMs = Number(server[1].replace(/_/g, ''));
   assert.ok(pageMs >= serverMs + 5000, `page ${pageMs} ms vs server ${serverMs} ms`);
-  assert.match(read('chat.js'), /open \? 15000 : GET_TIMEOUT_MS/, 'every GET but bootstrap uses it');
+  assert.match(read('chat.js'), /if \(open\) return request\(url, \{ headers: pageAuth\(\) \}, 15000\);/, 'bootstrap keeps 15 s');
+  assert.match(read('chat.js'), /request\(url, \{ headers: \{ 'X-Studio-Token': token \} \}, GET_TIMEOUT_MS\)/, 'every GET but bootstrap uses it');
   assert.match(readApp('server/host/aib_views.ts'), /setTimeout\(resolve, ADOPT_WAIT_MS\)/, 'the take-over wait uses the constant');
 });

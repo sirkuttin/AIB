@@ -150,6 +150,9 @@ Deno.test({
       const [, after] = await pc(s, 'GET', '/api/live/inbox?fresh=1');
       assertEquals(after.count, 2, 'both back in Needs you');
       assertEquals(after.snoozed, []);
+      // the phone page was opened after this one, so this tab is in the background now, and a hidden window does not ask for the
+      // inbox (it asks the moment it shows): bring it to the front first
+      await page.send('Page.bringToFront');
       await page.waitFor('document.querySelector(".ws-inbox-btn .ws-badge")?.textContent === "2"', 10000, 'the PC count is back');
       await page.close();
       await watcher.stop();

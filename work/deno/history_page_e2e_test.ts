@@ -74,6 +74,10 @@ const reqs = (page: Page) => page.eval<Req[]>('window.__req || []');
 const q = (r: Req) => new URL(r.u, 'http://x').searchParams;
 const forId = (list: Req[], path: string, id: string) => list.filter((r) => r.u.startsWith(path + '?') && q(r).get('id') === id);
 
+/** Activity reads a working chat that is on screen, so a chat built in seconds may already be cached when the test opens it. These
+ *  tests are about the cold open (a chat nothing has read yet): forget what the page kept of it first. */
+const goCold = (page: Page, id: string) => page.eval(`window.StudioChat.chatCache.drop(${JSON.stringify(id)})`);
+
 /** A big chat: one long turn of `n` finished steps with ~3 KB outputs and a reply each (about n * 3.5 KB of events). */
 async function bigChat(lab: Lab, n = 700, tag = 'Big'): Promise<Chat> {
   const chat = await lab.chat();
@@ -100,6 +104,7 @@ historyTest('h1 opening a big chat sends only its newest page (bytes gate), neve
   const chat = await bigChat(lab);
   const total = JSON.stringify((await lab.web.state(chat.id)).events).length;
   assert(total > 2.3 * 1024 * 1024, `the chat is big: ${total}`);
+  await goCold(page, chat.id);
   await page.eval(RECORD);
   await lab.select(chat);
   await shown(page, 'BIGEND');
@@ -116,6 +121,7 @@ historyTest('h1 opening a big chat sends only its newest page (bytes gate), neve
 historyTest('h2 scrolling up loads older pages above without moving the row you read (every frame), up to the first row', async (lab) => {
   const page = lab.page;
   const chat = await bigChat(lab);
+  await goCold(page, chat.id);
   await page.eval(RECORD);
   await lab.select(chat);
   await shown(page, 'BIGEND');

@@ -13,6 +13,7 @@
  *              doc socket as {type: "refused"}) until dismissed.
  *   Notices    words for the chat's next doc tool result ("userNotes"): the user kept a page, took a section back...
  */
+import { clearMemos } from '../core/memo.ts';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import { DocRefusal, type LiveDoc, type Op } from './live_doc.ts';
@@ -155,6 +156,7 @@ export class DocAgents {
     }
     const name = agentName(chat);
     p.aw.setLocalState({ user: { name }, agent: { chat, name, page, block, intent }, cursor });
+    clearMemos(); // the docs list's "writing" (web/docs_routes.ts keeps it 2 s) follows presence
   }
 
   /** The chats shown working now, with what the page shows. */
@@ -165,6 +167,7 @@ export class DocAgents {
   #absent(chat: string): void {
     const p = this.#presence.get(chat);
     if (!p) return;
+    clearMemos();
     this.#presence.delete(chat);
     p.aw.setLocalState(null);
     p.aw.destroy();

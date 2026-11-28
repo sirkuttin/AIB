@@ -1111,13 +1111,14 @@
       failedBy = new Map(
         (Array.isArray(live.reconnectFailed) ? live.reconnectFailed : []).map((r) => [r.provider + ':' + r.sessionId, r.error || '']),
       );
-    conversations = [];
     syncNames(live);
     window.AgentOrganizeUI?.sync(live.conversationRevision);
     await window.AgentReadState?.sync(live.readStateRevision);
     window.AgentWorkspaceUI?.syncPrefs?.(live.projectsRevision);
     window.AgentSettingsUI?.sync(live.settingsRevision);
     window.AllowRulesUI?.banner?.(!!live.allowRulesTampered);
+    // a fresh list starts only after the last await: two reads in flight at once must not both push into one array
+    conversations = [];
     for (const c of saved.sessions) {
       const owned = live.connections.find((l) => !l.closed && l.provider === c.provider && l.sessionId === c.id);
       if (owned) matched.add(owned.id);
@@ -5004,11 +5005,12 @@
     refresh({ poll: true });
   });
   // tests only: window.__aibTestListScale (or the poll scale) divides the conversation list's 5 s poll; 1 in the app
-  // (a hidden window does not list: it reads at once when it shows again; another AIB window's slow pace applies to the list too)
-  let listTickAt = 0;
+  // (a hidden window keeps listing, every 10 s: notify-ui.js raises the desktop notifications from this list while the window is away;
+  // the answer is a 304 when nothing changed. Another AIB window's slow pace applies to the list too)
+  let listTickAt = Date.now(); // the page's own first list (boot) has just run: the next one is a full period away, as with a plain 5 s timer
   setInterval(() => {
-    if (document.hidden) return;
-    const every = pollEvery(5000, 10000) / (TEST_POLL_SCALE > 1 ? 1 : Math.max(1, Number(window.__aibTestListScale) || 1));
+    const paced = document.hidden ? Math.max(pollEvery(5000, 10000), 10000 / TEST_POLL_SCALE) : pollEvery(5000, 10000);
+    const every = paced / (TEST_POLL_SCALE > 1 ? 1 : Math.max(1, Number(window.__aibTestListScale) || 1));
     if (Date.now() - listTickAt < every - 100) return;
     listTickAt = Date.now();
     listConversations().catch(fail);
@@ -6609,7 +6611,7 @@
       /* Draw a chat's head and body only when what they show changed: every tick used to rewrite all of them (40 idle chats were 1,300 DOM
          changes a second, 11% of a core in an idle window; perf_polls_test.ts). A open body also shows ages, so it is redrawn every 30 s. */
       const side0 = S?.paneSide ? S.paneSide(key) : '';
-      const sig = [conv ? titleOf(conv) : 'Conversation', conv ? nameOf(conv.provider) : '', n, open, side0, key === focus, key === subOwner ? subSelection?.key : '']
+      const sig = [conv ? titleOf(conv) : 'Conversation', conv ? nameOf(conv.provider) : '', n, open, side0, key === focus, key === subOwner ? subSelection?.key : '', open ? window.SubagentsUI?.folded?.(key, true) : '']
         .concat(open ? [JSON.stringify(rows), Math.floor(nowS / 30)] : [])
         .join('\u0001');
       if (sec.sig === sig && sec.root.isConnected) {

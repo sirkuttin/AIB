@@ -50,7 +50,7 @@ Deno.test({
       const view = await ph.eval<{ ids: string[]; subs: string[]; left: Record<string, number> }>(`(() => {
         const cws = [...document.querySelectorAll('.ph-cw')];
         const id = (n) => n.querySelector('.ph-card').dataset.chat;
-        return { ids: cws.map(id), subs: cws.filter((n) => n.classList.contains('ph-sub')).map(id),
+        return { ids: cws.map(id), subs: cws.filter((n) => n.classList.contains('ph-helper-row')).map(id),
           left: Object.fromEntries(cws.map((n) => [id(n), Math.round(n.querySelector('.ph-card').getBoundingClientRect().left)])) };
       })()`);
       const at = view.ids.indexOf('c-main');
